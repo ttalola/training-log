@@ -85,7 +85,7 @@ def db_get_detail(filename, mtime):
     if row['trackpoints_json'] is None:
         return None
     data = json.loads(row['data_json'])
-    if 'laps' not in data:
+    if 'laps' not in data or 'splits' not in data:
         return None
     data['coords']      = json.loads(row['coords_json'])      if row['coords_json']      else []
     data['trackpoints'] = json.loads(row['trackpoints_json']) if row['trackpoints_json'] else {}
@@ -321,6 +321,85 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
     return result
 
 
+def compute_best_splits(raw, sport):
+    """
+    raw: list of (time_s, dist_m, spd_kph, pwr_w, cad, hr)
+    Returns list of split dicts for best-effort distance and time windows.
+    """
+    if not raw or len(raw) < 10:
+        return []
+
+    is_swim = 'Swim' in sport
+    is_run  = 'Run'  in sport
+
+    if is_swim:
+        dist_targets = [(50, '50 m'), (100, '100 m'), (200, '200 m'), (400, '400 m'), (1500, '1500 m')]
+        time_targets = [(60, '01:00'), (300, '05:00'), (600, '10:00'), (1200, '20:00')]
+    elif is_run:
+        dist_targets = [(400, '400 m'), (1000, '1 km'), (5000, '5 km'), (10000, '10 km'), (21097, '21.1 km'), (42195, '42.2 km')]
+        time_targets = [(60, '01:00'), (300, '05:00'), (600, '10:00'), (1200, '20:00'), (1800, '30:00'), (3600, '60:00')]
+    else:
+        dist_targets = [(1000, '1 km'), (5000, '5 km'), (10000, '10 km'), (20000, '20 km'), (50000, '50 km')]
+        time_targets = [(60, '01:00'), (300, '05:00'), (600, '10:00'), (1200, '20:00'), (1800, '30:00'), (3600, '60:00')]
+
+    pts_d = sorted(raw, key=lambda x: x[1] if x[1] is not None else 0)
+    pts_t = sorted(raw, key=lambda x: x[0] if x[0] is not None else 0)
+
+    def make_prefix(pts, idx):
+        n = len(pts)
+        ps = [0.0] * (n + 1)
+        pc = [0]   * (n + 1)
+        for k in range(n):
+            v = pts[k][idx]
+            ps[k+1] = ps[k] + (v if v is not None else 0.0)
+            pc[k+1] = pc[k] + (1 if v is not None else 0)
+        return ps, pc
+
+    d_pre = [make_prefix(pts_d, i) for i in (2, 3, 4, 5)]
+    t_pre = [make_prefix(pts_t, i) for i in (2, 3, 4, 5)]
+
+    def _best(pts, dim_idx, target, prefixes):
+        n = len(pts)
+        dims = [p[dim_idx] for p in pts]
+        if not dims or dims[-1] - dims[0] < target * 0.9:
+            return None
+        bests = [None] * len(prefixes)
+        left = 0
+        for right in range(n):
+            while left + 1 < right and dims[right] - dims[left + 1] >= target:
+                left += 1
+            if dims[right] - dims[left] < target:
+                continue
+            for k, (ps, pc) in enumerate(prefixes):
+                cnt = pc[right + 1] - pc[left]
+                if cnt > 0:
+                    avg = (ps[right + 1] - ps[left]) / cnt
+                    if bests[k] is None or avg > bests[k]:
+                        bests[k] = avg
+        return bests if any(b is not None for b in bests) else None
+
+    def _row(label, result):
+        spd, pwr, cad, hr = result
+        return {
+            'label':        label,
+            'best_speed':   round(spd, 1) if spd   is not None else None,
+            'best_power':   round(pwr)    if pwr   is not None else None,
+            'best_cadence': round(cad)    if cad   is not None else None,
+            'best_hr':      round(hr)     if hr    is not None else None,
+        }
+
+    rows = []
+    for target_m, label in dist_targets:
+        r = _best(pts_d, 1, target_m, d_pre)
+        if r and r[0] is not None:
+            rows.append(_row(label, r))
+    for target_s, label in time_targets:
+        r = _best(pts_t, 0, target_s, t_pre)
+        if r and r[0] is not None:
+            rows.append(_row(label, r))
+    return rows
+
+
 def downsample(points, max_pts=MAX_CHART_POINTS):
     """Even-step downsampling to at most max_pts entries."""
     if len(points) <= max_pts:
@@ -374,8 +453,9 @@ def parse_tcx(filepath):
     chart_raw       = []   # (dist_km, alt_m, spd_kph, pwr_w, cad)
     hr_vals_all     = []   # per-trackpoint HR for stats
 
-    laps_data = []
-    lap_id    = 0
+    laps_data  = []
+    splits_raw = []
+    lap_id     = 0
 
     for lap in activity.findall('ns:Lap', NS):
         lap_id += 1
@@ -418,21 +498,21 @@ def parse_tcx(filepath):
             cad_el = tp.findtext('ns:Cadence',         namespaces=NS)
             hr_el  = tp.findtext('ns:HeartRateBpm/ns:Value', namespaces=NS)
 
-            if t_el and w_el:
-                tp_time = datetime.fromisoformat(t_el.replace('Z', '+00:00'))
+            tp_time = datetime.fromisoformat(t_el.replace('Z', '+00:00')) if t_el else None
+
+            if tp_time and w_el:
                 tp_watts_for_np.append((tp_time, float(w_el)))
 
             if lat_el and lon_el:
                 coords.append([round(float(lat_el), 6), round(float(lon_el), 6)])
 
-            if spd_el and t_el and prev_time:
-                cur = datetime.fromisoformat(t_el.replace('Z', '+00:00'))
-                dt  = (cur - prev_time).total_seconds()
+            if spd_el and tp_time and prev_time:
+                dt = (tp_time - prev_time).total_seconds()
                 if float(spd_el) > 0.5 and 0 < dt <= 5:
                     moving_s     += dt
                     lap_moving_s += dt
-            if t_el:
-                prev_time = datetime.fromisoformat(t_el.replace('Z', '+00:00'))
+            if tp_time:
+                prev_time = tp_time
 
             cad_int = int(cad_el) if cad_el else None
             if cad_int and cad_int > 0:
@@ -448,6 +528,16 @@ def parse_tcx(filepath):
                 int(float(w_el))                 if w_el   else None,
                 cad_int,
             ))
+
+            if tp_time and dst_el:
+                splits_raw.append((
+                    (tp_time - start_utc).total_seconds(),
+                    float(dst_el),
+                    round(float(spd_el) * 3.6, 1) if spd_el else None,
+                    int(float(w_el))               if w_el   else None,
+                    cad_int,
+                    int(float(hr_el))              if hr_el  else None,
+                ))
 
         _lap_mov = lap_moving_s if lap_moving_s > 0 else lt
         _lap_dst = float(dist) if dist else 0
@@ -506,6 +596,7 @@ def parse_tcx(filepath):
         'tss_per_hour':       tss_per_hour,
         'ftp':                ATHLETE_FTP,
         'laps':               laps_data,
+        'splits':             compute_best_splits(splits_raw, sport_label),
         'coords':             coords,
         'trackpoints':        build_trackpoints(chart_raw),
         'stats':              compute_detailed_stats(chart_raw, hr_vals_all, {
@@ -578,7 +669,8 @@ def parse_fit(filepath):
     prev_ts         = None
     cum_dist        = 0.0
 
-    laps_data = []
+    laps_data  = []
+    splits_raw = []
     for i, msg in enumerate(ff.get_messages('lap'), 1):
         lf   = {f.name: f.value for f in msg.fields}
         lt_e = lf.get('total_elapsed_time') or 0
@@ -639,6 +731,17 @@ def parse_fit(filepath):
             int(c)                               if (c and int(c) > 0)  else None,
         ))
 
+        splits_dist = float(dist_field) if dist_field else (cum_dist if cum_dist > 0 else None)
+        if ts and splits_dist is not None:
+            splits_raw.append((
+                (ts - start_time).total_seconds(),
+                splits_dist,
+                round(float(spd) * 3.6, 1) if spd else None,
+                int(fields['power'])        if fields.get('power') else None,
+                int(c)                      if (c and int(c) > 0)  else None,
+                int(hr)                     if (hr and int(hr) > 0) else None,
+            ))
+
     if sport_label == 'Ride' and not coords:
         sport_label = 'Indoor Ride'
     mov_s = moving_s if moving_s > 0 else total_time
@@ -675,6 +778,7 @@ def parse_fit(filepath):
         'tss_per_hour':       tss_per_hour,
         'ftp':                ATHLETE_FTP,
         'laps':               laps_data,
+        'splits':             compute_best_splits(splits_raw, sport_label),
         'coords':             coords,
         'trackpoints':        build_trackpoints(chart_raw),
         'stats':              compute_detailed_stats(chart_raw, hr_vals_all, {
@@ -739,7 +843,7 @@ def load_activities():
             if data:
                 db_save(fname, mtime, data)
         if data:
-            activities.append({k: v for k, v in data.items() if k not in ('coords', 'trackpoints', 'laps', 'stats')})
+            activities.append({k: v for k, v in data.items() if k not in ('coords', 'trackpoints', 'laps', 'stats', 'splits')})
     db_remove_stale(filenames)
     activities.sort(key=lambda x: x['date_sort'], reverse=True)
     return activities

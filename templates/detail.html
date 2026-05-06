@@ -338,9 +338,11 @@
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="tab-stats">Stats</button>
       <button class="tab-btn" data-tab="tab-intervals">Intervals</button>
+      <button class="tab-btn" data-tab="tab-splits">Best Splits</button>
     </div>
     <div class="tab-pane active" id="tab-stats"></div>
     <div class="tab-pane" id="tab-intervals"></div>
+    <div class="tab-pane" id="tab-splits"></div>
   </div>
 
 </main>
@@ -640,6 +642,62 @@
     Plotly.newPlot('chart', traces, layout, config);
   }
 
+  function renderSplits(splits, activityType) {
+    const pane = document.getElementById('tab-splits');
+    if (!splits || splits.length === 0) {
+      pane.innerHTML = '<p style="padding:24px;color:#aaa;text-align:center">No split data available</p>';
+      return;
+    }
+    const isSwim = activityType.includes('Swim');
+    const isRun  = activityType.includes('Run');
+    const cadUnit = isSwim ? 'spm' : 'rpm';
+
+    // Column order: Distance/Time, Best Speed, [Best HR for swim/run], [Best Power for cycle/run], Best Cadence
+    const cols = [{ key: 'label', label: 'Distance/Time' }];
+    cols.push({ key: 'best_speed', label: 'Best Speed' });
+    if (isSwim || isRun) cols.push({ key: 'best_hr',      label: 'Best Heart Rate' });
+    if (!isSwim)         cols.push({ key: 'best_power',   label: 'Best Power' });
+    cols.push({ key: 'best_cadence', label: 'Best Cadence' });
+
+    let html = '<div class="intervals-wrap"><table class="intervals-table"><thead><tr>';
+    for (const col of cols) html += `<th>${col.label}</th>`;
+    html += '</tr></thead><tbody>';
+
+    for (const split of splits) {
+      html += '<tr>';
+      for (const { key } of cols) {
+        if (key === 'label') {
+          html += `<td>${split.label}</td>`;
+        } else if (key === 'best_speed') {
+          const v = split.best_speed;
+          if (v == null) { html += '<td><span style="color:#ccc">—</span></td>'; }
+          else if (isSwim) {
+            const p = swimPace(v);
+            html += p ? `<td style="color:#2aab8e">${p}<span class="lap-unit">/100m</span></td>` : '<td><span style="color:#ccc">—</span></td>';
+          } else if (isRun) {
+            const p = runPace(v);
+            html += p ? `<td style="color:#2aab8e">${p}<span class="lap-unit">/km</span></td>` : '<td><span style="color:#ccc">—</span></td>';
+          } else {
+            html += `<td style="color:#2aab8e">${v}<span class="lap-unit">kph</span></td>`;
+          }
+        } else if (key === 'best_power') {
+          const v = split.best_power;
+          html += v != null ? `<td style="color:#2aab8e">${v}<span class="lap-unit">w</span></td>` : '<td><span style="color:#ccc">—</span></td>';
+        } else if (key === 'best_hr') {
+          const v = split.best_hr;
+          html += v != null ? `<td style="color:#2aab8e">${v}<span class="lap-unit">bpm</span></td>` : '<td><span style="color:#ccc">—</span></td>';
+        } else if (key === 'best_cadence') {
+          const v = split.best_cadence;
+          html += v != null ? `<td style="color:#2aab8e">${v}<span class="lap-unit">${cadUnit}</span></td>` : '<td><span style="color:#ccc">—</span></td>';
+        }
+      }
+      html += '</tr>';
+    }
+
+    html += '</tbody></table></div>';
+    pane.innerHTML = html;
+  }
+
   function renderIntervals(laps, activityType = '') {
     const pane = document.getElementById('tab-intervals');
     if (!laps || laps.length === 0) {
@@ -719,6 +777,7 @@
       renderChart(a.trackpoints || {});
       renderDetailStats(a.stats || {});
       renderIntervals(a.laps || [], a.type);
+      renderSplits(a.splits || [], a.type);
       document.getElementById('tabs-card').style.display = 'block';
     })
     .catch(err => {
