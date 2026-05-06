@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Training Log</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    color: #333;
+    background: #f5f5f5;
+  }
+
+  header {
+    background: #fff;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 18px; font-weight: 600; color: #333; }
+
+  .import-btn {
+    background: #2aab8e;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .import-btn:hover:not(:disabled) { background: #249478; }
+  .import-btn:disabled { background: #b0b0b0; cursor: default; }
+
+  .import-status {
+    padding: 10px 32px;
+    font-size: 13px;
+    display: none;
+  }
+  .import-status.uploading { background: #fff8e1; border-bottom: 1px solid #ffe082; color: #6d4c00; }
+  .import-status.success   { background: #e8f5e9; border-bottom: 1px solid #a5d6a7; color: #1b5e20; }
+  .import-status.error     { background: #ffebee; border-bottom: 1px solid #ef9a9a; color: #b71c1c; }
+
+  body.drag-active .card {
+    border-color: #2aab8e;
+    box-shadow: 0 0 0 3px rgba(42,171,142,0.15);
+  }
+
+  main { padding: 24px 32px; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .table-wrap { overflow-x: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+  }
+
+  thead th {
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 500;
+    color: #888;
+    border-bottom: 1px solid #e8e8e8;
+    user-select: none;
+    cursor: pointer;
+    position: relative;
+  }
+  thead th:hover { color: #444; }
+  thead th.sorted-asc::after  { content: ' ↑'; color: #555; }
+  thead th.sorted-desc::after { content: ' ↓'; color: #555; }
+
+  tbody tr {
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.1s;
+  }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: #fafafa; }
+
+  td {
+    padding: 14px 16px;
+    color: #444;
+    vertical-align: middle;
+  }
+
+  .name-link {
+    color: #2aab8e;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .name-link:hover { text-decoration: underline; }
+
+  .type-badge {
+    display: inline-block;
+    font-size: 12px;
+    color: #666;
+  }
+
+  .empty {
+    color: #ccc;
+  }
+
+  /* Footer / pagination */
+  .table-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    padding: 12px 16px;
+    border-top: 1px solid #f0f0f0;
+    font-size: 13px;
+    color: #666;
+  }
+
+  .per-page-label { white-space: nowrap; }
+
+  .per-page-select {
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 13px;
+    color: #444;
+    background: #fff;
+    cursor: pointer;
+  }
+
+  .page-info { white-space: nowrap; min-width: 90px; text-align: right; }
+
+  .page-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #555;
+    font-size: 16px;
+    padding: 2px 6px;
+    line-height: 1;
+    border-radius: 3px;
+  }
+  .page-btn:hover:not(:disabled) { background: #f0f0f0; }
+  .page-btn:disabled { color: #ccc; cursor: default; }
+
+  .loading, .no-data {
+    text-align: center;
+    padding: 48px;
+    color: #aaa;
+    font-size: 15px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Training Log</h1>
+  <button class="import-btn" id="import-btn">+ Import</button>
+</header>
+<div class="import-status" id="import-status"></div>
+<input type="file" id="file-input" multiple accept=".tcx,.fit" style="display:none">
+
+<main>
+  <div class="card">
+    <div class="table-wrap">
+      <table id="activities-table">
+        <thead>
+          <tr>
+            <th data-key="date_sort">Date</th>
+            <th data-key="name">Name</th>
+            <th data-key="type">Type</th>
+            <th data-key="total_time_s">Total Time</th>
+            <th data-key="distance_km">Distance</th>
+            <th data-key="avg_speed_kph">Avg Speed</th>
+            <th data-key="avg_hr">Avg HR</th>
+            <th data-key="max_hr">Max HR</th>
+            <th data-key="avg_cadence">Avg Cadence</th>
+            <th data-key="avg_watts">Avg Watts</th>
+            <th data-key="normalized_power">Normalized Power</th>
+            <th data-key="calories">Calories</th>
+          </tr>
+        </thead>
+        <tbody id="table-body">
+          <tr><td colspan="12" class="loading">Loading activities…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="table-footer">
+      <span class="per-page-label">Items per page:</span>
+      <select class="per-page-select" id="per-page">
+        <option value="10" selected>10</option>
+        <option value="25">25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+      <span class="page-info" id="page-info"></span>
+      <button class="page-btn" id="btn-first"  title="First page">⏮</button>
+      <button class="page-btn" id="btn-prev"   title="Previous">‹</button>
+      <button class="page-btn" id="btn-next"   title="Next">›</button>
+      <button class="page-btn" id="btn-last"   title="Last page">⏭</button>
+    </div>
+  </div>
+</main>
+
+<script>
+  let allActivities = [];
+  let sortKey  = 'date_sort';
+  let sortDir  = 'desc';   // 'asc' | 'desc'
+  let page     = 1;
+  let perPage  = 10;
+
+  const tbody    = document.getElementById('table-body');
+  const pageInfo = document.getElementById('page-info');
+  const perPageEl = document.getElementById('per-page');
+
+  function dash(v) {
+    return (v === null || v === undefined || v === '') ? '<span class="empty">—</span>' : v;
+  }
+
+  function renderRow(a) {
+    const cadUnit = a.type.includes('Swim') ? 'spm' : 'rpm';
+    return `<tr>
+      <td>${a.date}</td>
+      <td><a class="name-link" href="/activity/${encodeURIComponent(a.filename)}">${a.name}</a></td>
+      <td><span class="type-badge">${a.type}</span></td>
+      <td>${dash(a.total_time)}</td>
+      <td>${a.distance_km != null ? a.distance_km + ' km' : dash(null)}</td>
+      <td>${a.avg_speed_kph != null ? a.avg_speed_kph + ' kph' : dash(null)}</td>
+      <td>${a.avg_hr != null ? a.avg_hr + ' bpm' : dash(null)}</td>
+      <td>${a.max_hr != null ? a.max_hr + ' bpm' : dash(null)}</td>
+      <td>${a.avg_cadence != null ? a.avg_cadence + ' ' + cadUnit : dash(null)}</td>
+      <td>${a.avg_watts != null ? a.avg_watts + ' w' : dash(null)}</td>
+      <td>${a.normalized_power != null ? a.normalized_power + ' w' : dash(null)}</td>
+      <td>${a.calories != null ? a.calories + ' kcal' : dash(null)}</td>
+    </tr>`;
+  }
+
+  function sorted(arr) {
+    return [...arr].sort((a, b) => {
+      let av = a[sortKey], bv = b[sortKey];
+      if (av == null) av = sortDir === 'asc' ? Infinity : -Infinity;
+      if (bv == null) bv = sortDir === 'asc' ? Infinity : -Infinity;
+      if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === 'asc' ? av - bv : bv - av;
+    });
+  }
+
+  function render() {
+    const data  = sorted(allActivities);
+    const total = data.length;
+    const pages = Math.max(1, Math.ceil(total / perPage));
+    page = Math.min(page, pages);
+    const start = (page - 1) * perPage;
+    const slice = data.slice(start, start + perPage);
+
+    if (total === 0) {
+      tbody.innerHTML = '<tr><td colspan="12" class="no-data">No activities found. Drop .tcx or .fit files in the <code>activities/</code> folder.</td></tr>';
+    } else {
+      tbody.innerHTML = slice.map(renderRow).join('');
+    }
+
+    const end = Math.min(start + perPage, total);
+    pageInfo.textContent = total ? `${start + 1}–${end} of ${total}` : '';
+
+    document.getElementById('btn-first').disabled = page <= 1;
+    document.getElementById('btn-prev').disabled  = page <= 1;
+    document.getElementById('btn-next').disabled  = page >= pages;
+    document.getElementById('btn-last').disabled  = page >= pages;
+
+    // Update header sort indicators
+    document.querySelectorAll('thead th').forEach(th => {
+      th.classList.remove('sorted-asc', 'sorted-desc');
+      if (th.dataset.key === sortKey) {
+        th.classList.add(sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+      }
+    });
+  }
+
+  // Column sort
+  document.querySelectorAll('thead th').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.key;
+      if (sortKey === key) {
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortKey = key;
+        sortDir = key === 'date_sort' ? 'desc' : 'asc';
+      }
+      page = 1;
+      render();
+    });
+  });
+
+  // Pagination
+  document.getElementById('btn-first').addEventListener('click', () => { page = 1; render(); });
+  document.getElementById('btn-prev').addEventListener('click',  () => { page--; render(); });
+  document.getElementById('btn-next').addEventListener('click',  () => { page++; render(); });
+  document.getElementById('btn-last').addEventListener('click',  () => {
+    page = Math.ceil(allActivities.length / perPage);
+    render();
+  });
+
+  perPageEl.addEventListener('change', () => {
+    perPage = parseInt(perPageEl.value);
+    page = 1;
+    render();
+  });
+
+  // ── Import ──────────────────────────────────────────────────────────────────
+
+  const importBtn    = document.getElementById('import-btn');
+  const fileInput    = document.getElementById('file-input');
+  const importStatus = document.getElementById('import-status');
+
+  function showStatus(cls, msg) {
+    importStatus.className = `import-status ${cls}`;
+    importStatus.textContent = msg;
+    importStatus.style.display = 'block';
+  }
+
+  function uploadFiles(files) {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+
+    showStatus('uploading', `Uploading ${files.length} file${files.length > 1 ? 's' : ''}…`);
+    importBtn.disabled = true;
+
+    fetch('/api/import', { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(data => {
+        const ok   = data.results.filter(r => r.status === 'ok').length;
+        const skip = data.results.filter(r => r.status === 'skipped').length;
+        let msg = ok === 1 ? '1 activity imported' : `${ok} activities imported`;
+        if (skip > 0) msg += `, ${skip} skipped (not TCX/FIT)`;
+        showStatus('success', msg);
+        if (ok > 0) {
+          fetch('/api/activities').then(r => r.json()).then(d => { allActivities = d; page = 1; render(); });
+        }
+      })
+      .catch(err => showStatus('error', `Upload failed: ${err.message}`))
+      .finally(() => { importBtn.disabled = false; });
+  }
+
+  importBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) {
+      uploadFiles([...fileInput.files]);
+      fileInput.value = '';
+    }
+  });
+
+  // Drag-and-drop onto the page
+  document.addEventListener('dragover', e => {
+    if ([...e.dataTransfer.types].includes('Files')) {
+      e.preventDefault();
+      document.body.classList.add('drag-active');
+    }
+  });
+  document.addEventListener('dragleave', e => {
+    if (!e.relatedTarget) document.body.classList.remove('drag-active');
+  });
+  document.addEventListener('drop', e => {
+    e.preventDefault();
+    document.body.classList.remove('drag-active');
+    const files = [...e.dataTransfer.files].filter(f => /\.(tcx|fit)$/i.test(f.name));
+    if (files.length) uploadFiles(files);
+  });
+
+  // Load data
+  fetch('/api/activities')
+    .then(r => r.json())
+    .then(data => {
+      allActivities = data;
+      render();
+    })
+    .catch(() => {
+      tbody.innerHTML = '<tr><td colspan="12" class="no-data">Failed to load activities.</td></tr>';
+    });
+</script>
+</body>
+</html>

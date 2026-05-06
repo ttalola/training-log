@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Activity Detail</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    color: #333;
+    background: #f5f5f5;
+    min-height: 100vh;
+  }
+
+  header {
+    background: #fff;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 14px 24px;
+  }
+
+  .header-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  .back-link {
+    color: #2aab8e;
+    text-decoration: none;
+    font-size: 20px;
+    line-height: 1;
+    padding: 2px 4px;
+  }
+  .back-link:hover { opacity: 0.75; }
+
+  .activity-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: #222;
+  }
+
+  .header-meta {
+    font-size: 13px;
+    color: #888;
+    padding-left: 40px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .header-meta span { white-space: nowrap; }
+
+  main {
+    padding: 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .detail-layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 20px;
+    align-items: start;
+  }
+
+  /* Map */
+  .map-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  #map {
+    height: 480px;
+    width: 100%;
+  }
+
+  /* Stats */
+  .stats-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 8px 0;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: #f0f0f0;
+  }
+
+  .stat {
+    background: #fff;
+    padding: 20px 16px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 28px;
+    font-weight: 300;
+    color: #222;
+    line-height: 1.1;
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 3px;
+  }
+
+  .stat-unit {
+    font-size: 14px;
+    font-weight: 400;
+    color: #555;
+  }
+
+  .stat-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-left: 4px;
+    flex-shrink: 0;
+    align-self: center;
+  }
+
+  .dot-green  { background: #4caf50; }
+  .dot-blue   { background: #2196f3; }
+  .dot-pink   { background: #e91e8c; }
+  .dot-orange { background: #ff9800; }
+  .dot-teal   { background: #2aab8e; }
+
+  .stat-label {
+    font-size: 12px;
+    color: #999;
+    margin-top: 4px;
+  }
+
+  .stat-null .stat-value { color: #ccc; }
+
+  .no-map {
+    height: 480px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #aaa;
+    font-size: 15px;
+    background: #fafafa;
+  }
+
+  .loading-overlay {
+    padding: 80px;
+    text-align: center;
+    color: #aaa;
+    font-size: 15px;
+  }
+
+  /* Detailed stats panel */
+  .stats-panel {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 8px 24px 24px;
+    margin-top: 20px;
+  }
+
+  .stat-section {
+    padding: 20px 0 4px 16px;
+    border-left: 3px solid transparent;
+    margin-bottom: 4px;
+  }
+  .stat-section.essential { border-left-color: transparent; padding-left: 0; }
+  .stat-section.speed     { border-left-color: #42a5f5; }
+  .stat-section.power     { border-left-color: #ff9800; }
+  .stat-section.cadence   { border-left-color: #e91e8c; }
+  .stat-section.heart_rate { border-left-color: #ef5350; }
+
+  .section-title {
+    font-size: 17px;
+    font-weight: 400;
+    color: #333;
+    margin-bottom: 16px;
+  }
+
+  .section-stats {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 16px 0;
+  }
+
+  .ss-cell { padding-right: 8px; }
+
+  .ss-value {
+    font-size: 24px;
+    font-weight: 300;
+    color: #222;
+    line-height: 1.1;
+  }
+  .ss-null .ss-value { color: #ccc; font-size: 20px; }
+
+  .ss-unit {
+    font-size: 12px;
+    font-weight: 400;
+    color: #666;
+    margin-left: 2px;
+  }
+
+  .ss-label {
+    font-size: 11px;
+    color: #aaa;
+    margin-top: 3px;
+  }
+
+  /* Chart */
+  .chart-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 16px 8px 8px;
+    margin-top: 20px;
+  }
+
+  #chart { width: 100%; height: 320px; }
+
+  /* Tabs */
+  .tabs-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    margin-top: 20px;
+    overflow: hidden;
+  }
+
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid #e8e8e8;
+    background: #fafafa;
+  }
+
+  .tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 12px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #888;
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+  .tab-btn:hover { color: #444; }
+  .tab-btn.active {
+    color: #2aab8e;
+    border-bottom-color: #2aab8e;
+    background: #fff;
+  }
+
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  #tab-stats { padding: 8px 24px 24px; }
+
+  /* Intervals table */
+  .intervals-wrap { overflow-x: auto; }
+
+  .intervals-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .intervals-table thead th {
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 500;
+    color: #888;
+    border-bottom: 1px solid #e8e8e8;
+  }
+  .intervals-table tbody td {
+    padding: 12px 14px;
+    color: #444;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .intervals-table tbody tr:last-child td { border-bottom: none; }
+  .intervals-table tbody tr:hover { background: #fafafa; }
+
+  .lap-active { color: #2aab8e; font-size: 11px; font-weight: 500; }
+  .lap-rest   { color: #bbb;    font-size: 11px; }
+  .lap-unit   { font-size: 11px; color: #999; margin-left: 2px; }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .detail-layout { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-top">
+    <a class="back-link" href="/" title="Back">←</a>
+    <span class="activity-title" id="title">Loading…</span>
+  </div>
+  <div class="header-meta" id="header-meta"></div>
+</header>
+
+<main>
+  <div id="loading" class="loading-overlay">Loading activity…</div>
+
+  <div class="detail-layout" id="detail-layout" style="display:none">
+
+    <div class="map-card">
+      <div id="map-container">
+        <div id="map"></div>
+      </div>
+    </div>
+
+    <div class="stats-card">
+      <div class="stats-grid" id="stats-grid"></div>
+    </div>
+
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-card" id="chart-card" style="display:none">
+    <div id="chart"></div>
+  </div>
+
+  <!-- Stats & Intervals tabs -->
+  <div class="tabs-card" id="tabs-card" style="display:none">
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="tab-stats">Stats</button>
+      <button class="tab-btn" data-tab="tab-intervals">Intervals</button>
+    </div>
+    <div class="tab-pane active" id="tab-stats"></div>
+    <div class="tab-pane" id="tab-intervals"></div>
+  </div>
+
+</main>
+
+<script>
+  const filename = {{ filename|tojson }};
+  let map = null;
+
+  function dash(v) { return v != null ? v : '—'; }
+
+  function statHtml(value, unit, label, dotClass, isNull) {
+    const dotHtml = dotClass ? `<span class="stat-dot ${dotClass}"></span>` : '';
+    return `
+      <div class="stat ${isNull ? 'stat-null' : ''}">
+        <div class="stat-value">
+          <span>${dash(value)}</span>
+          ${value != null && unit ? `<span class="stat-unit">${unit}</span>` : ''}
+          ${dotHtml}
+        </div>
+        <div class="stat-label">${label}</div>
+      </div>`;
+  }
+
+  function renderStats(a) {
+    const cadUnit = a.type.includes('Swim') ? 'spm' : 'rpm';
+    const stats = [
+      [a.distance_km, 'km',    'Distance',       null,        a.distance_km == null],
+      [a.moving_time, null,    'Moving Time',     null,        a.moving_time == null],
+      [a.ascent_m,    'm',     'Ascent Gain',     'dot-green', a.ascent_m == null],
+      [a.avg_speed_kph, 'kph', 'Average Speed',   'dot-blue',  a.avg_speed_kph == null],
+      [a.max_speed_kph, 'kph', 'Max Speed',       'dot-blue',  a.max_speed_kph == null],
+      [a.avg_active_cadence, cadUnit, 'Active Avg Cadence', 'dot-pink', a.avg_active_cadence == null],
+      [a.avg_watts,   'w',     'Avg Watts',       'dot-orange', a.avg_watts == null],
+      [a.normalized_power, 'w', 'Normalized Power', 'dot-teal', a.normalized_power == null],
+      [a.calories,    'kcal',  'Calories',        null,        a.calories == null],
+    ];
+
+    // If TSS available, replace last two
+    if (a.tss != null) {
+      stats[7] = [a.tss,          null,  'TSS',          'dot-orange', false];
+      stats[8] = [a.tss_per_hour, null,  'TSS / Hour',   'dot-orange', false];
+    }
+
+    // If HR available, add HR row
+    const hrStats = [];
+    if (a.avg_hr || a.max_hr) {
+      hrStats.push(statHtml(a.avg_hr, 'bpm', 'Avg HR', 'dot-pink', a.avg_hr == null));
+      hrStats.push(statHtml(a.max_hr, 'bpm', 'Max HR', 'dot-pink', a.max_hr == null));
+    }
+
+    document.getElementById('stats-grid').innerHTML =
+      stats.map(([v, u, l, d, n]) => statHtml(v, u, l, d, n)).join('') +
+      hrStats.join('');
+  }
+
+  function renderMap(coords) {
+    if (!coords || coords.length === 0) {
+      document.getElementById('map-container').innerHTML =
+        '<div class="no-map">No GPS data in this activity</div>';
+      return;
+    }
+
+    map = L.map('map', { zoomControl: true });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
+      maxZoom: 19,
+    }).addTo(map);
+
+    const line = L.polyline(coords, {
+      color: '#e8333a',
+      weight: 3,
+      opacity: 0.9,
+    }).addTo(map);
+
+    // Start marker
+    const startIcon = L.divIcon({
+      html: '<div style="width:12px;height:12px;background:#2aab8e;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>',
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
+      className: '',
+    });
+    L.marker(coords[0], { icon: startIcon }).addTo(map);
+
+    // End marker
+    const endIcon = L.divIcon({
+      html: '<div style="width:14px;height:14px;background:#333;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>',
+      iconSize: [14, 14],
+      iconAnchor: [7, 7],
+      className: '',
+    });
+    L.marker(coords[coords.length - 1], { icon: endIcon }).addTo(map);
+
+    map.fitBounds(line.getBounds(), { padding: [24, 24] });
+  }
+
+  function renderDetailStats(stats) {
+    if (!stats) return;
+    const panel = document.getElementById('tab-stats');
+
+    const SECTIONS = [
+      { key: 'essential',   label: 'Essential' },
+      { key: 'speed',       label: 'Speed' },
+      { key: 'power',       label: 'Power' },
+      { key: 'cadence',     label: 'Cadence' },
+      { key: 'heart_rate',  label: 'Heart Rate' },
+    ];
+
+    let html = '';
+    for (const { key, label } of SECTIONS) {
+      const items = stats[key];
+      if (!items || items.length === 0) continue;
+
+      html += `<div class="stat-section ${key}">`;
+      html += `<div class="section-title">${label}</div>`;
+      html += '<div class="section-stats">';
+
+      for (const [value, unit, lbl] of items) {
+        const isNull = value == null;
+        const valStr = isNull ? '—' : value;
+        const unitHtml = (!isNull && unit) ? `<span class="ss-unit">${unit}</span>` : '';
+        html += `<div class="ss-cell ${isNull ? 'ss-null' : ''}">
+          <div class="ss-value">${valStr}${unitHtml}</div>
+          <div class="ss-label">${lbl}</div>
+        </div>`;
+      }
+
+      html += '</div></div>';
+    }
+
+    if (html) {
+      panel.innerHTML = html;
+    }
+  }
+
+  function renderChart(tp) {
+    if (!tp || !tp.dist_km || tp.dist_km.length === 0) return;
+
+    const hasElev = tp.alt_m  && tp.alt_m.some(v => v != null);
+    const hasSpd  = tp.spd_kph && tp.spd_kph.some(v => v != null);
+    const hasPwr  = tp.pwr_w  && tp.pwr_w.some(v => v != null);
+    const hasCad  = tp.cad    && tp.cad.some(v => v != null);
+
+    if (!hasElev && !hasSpd && !hasPwr && !hasCad) return;
+
+    const traces = [];
+
+    if (hasElev) traces.push({
+      name: 'Elevation',
+      x: tp.dist_km, y: tp.alt_m,
+      fill: 'tozeroy', fillcolor: 'rgba(76,175,80,0.15)',
+      line: { color: '#4caf50', width: 1.5 },
+      type: 'scatter', mode: 'lines',
+      yaxis: 'y1',
+      hovertemplate: '%{y:.0f} m<extra>Elevation</extra>',
+    });
+
+    if (hasSpd) traces.push({
+      name: 'Speed',
+      x: tp.dist_km, y: tp.spd_kph,
+      line: { color: '#42a5f5', width: 1.5 },
+      type: 'scatter', mode: 'lines',
+      yaxis: 'y2',
+      hovertemplate: '%{y:.1f} kph<extra>Speed</extra>',
+    });
+
+    if (hasPwr) traces.push({
+      name: 'Power',
+      x: tp.dist_km, y: tp.pwr_w,
+      line: { color: '#ff9800', width: 1 },
+      type: 'scatter', mode: 'lines',
+      yaxis: 'y3',
+      hovertemplate: '%{y:.0f} w<extra>Power</extra>',
+    });
+
+    if (hasCad) traces.push({
+      name: 'Cadence',
+      x: tp.dist_km, y: tp.cad,
+      line: { color: '#e91e8c', width: 1 },
+      type: 'scatter', mode: 'lines',
+      yaxis: 'y4',
+      hovertemplate: '%{y:.0f} rpm<extra>Cadence</extra>',
+    });
+
+    // Leave room on left for 2 y-axes, right for 2 y-axes
+    const layout = {
+      xaxis: {
+        domain: [0.1, 0.9],
+        ticksuffix: 'km',
+        showgrid: true,
+        gridcolor: '#f0f0f0',
+        zeroline: false,
+      },
+      // Elevation — inner left axis (attached to plot edge)
+      yaxis: {
+        title: { text: 'Elevation', font: { color: '#4caf50', size: 11 } },
+        tickfont: { color: '#4caf50', size: 10 },
+        ticksuffix: ' m',
+        side: 'left',
+        showgrid: true,
+        gridcolor: '#f5f5f5',
+        zeroline: false,
+      },
+      // Speed — inner right axis
+      yaxis2: {
+        title: { text: 'Speed', font: { color: '#42a5f5', size: 11 } },
+        tickfont: { color: '#42a5f5', size: 10 },
+        ticksuffix: ' kph',
+        side: 'right',
+        overlaying: 'y',
+        showgrid: false,
+        zeroline: false,
+      },
+      // Power — outer left axis
+      yaxis3: {
+        title: { text: 'Power', font: { color: '#ff9800', size: 11 } },
+        tickfont: { color: '#ff9800', size: 10 },
+        ticksuffix: ' w',
+        side: 'left',
+        overlaying: 'y',
+        anchor: 'free',
+        position: 0.0,
+        showgrid: false,
+        zeroline: false,
+        rangemode: 'tozero',
+      },
+      // Cadence — outer right axis
+      yaxis4: {
+        title: { text: 'Cadence', font: { color: '#e91e8c', size: 11 } },
+        tickfont: { color: '#e91e8c', size: 10 },
+        ticksuffix: ' rpm',
+        side: 'right',
+        overlaying: 'y',
+        anchor: 'free',
+        position: 1.0,
+        showgrid: false,
+        zeroline: false,
+      },
+      hovermode: 'x unified',
+      hoverlabel: { bgcolor: '#222', font: { color: '#fff', size: 12 } },
+      legend: {
+        orientation: 'h',
+        y: -0.18,
+        x: 0.5,
+        xanchor: 'center',
+        font: { size: 12 },
+      },
+      paper_bgcolor: '#fff',
+      plot_bgcolor: '#fff',
+      margin: { l: 60, r: 60, t: 10, b: 50 },
+      showlegend: true,
+    };
+
+    const config = {
+      responsive: true,
+      displayModeBar: false,
+    };
+
+    document.getElementById('chart-card').style.display = 'block';
+    Plotly.newPlot('chart', traces, layout, config);
+  }
+
+  function renderIntervals(laps) {
+    const pane = document.getElementById('tab-intervals');
+    if (!laps || laps.length === 0) {
+      pane.innerHTML = '<p style="padding:24px;color:#aaa;text-align:center">No lap data available</p>';
+      return;
+    }
+    const cols = [
+      ['lap_id',        'Lap',         null],
+      ['distance_km',   'Distance',    'km'],
+      ['moving_time',   'Moving Time', null],
+      ['elapsed_time',  'Elapsed',     null],
+      ['avg_speed_kph', 'Avg Speed',   'kph'],
+      ['max_speed_kph', 'Max Speed',   'kph'],
+      ['avg_hr',        'Avg HR',      'bpm'],
+      ['max_hr',        'Max HR',      'bpm'],
+      ['avg_watts',     'Avg Watts',   'w'],
+      ['calories',      'Calories',    'kcal'],
+      ['active',        'Active',      null],
+    ];
+    let html = '<div class="intervals-wrap"><table class="intervals-table"><thead><tr>';
+    for (const [, label] of cols) html += `<th>${label}</th>`;
+    html += '</tr></thead><tbody>';
+    for (const lap of laps) {
+      html += '<tr>';
+      for (const [key, , unit] of cols) {
+        if (key === 'active') {
+          html += `<td><span class="${lap.active ? 'lap-active' : 'lap-rest'}">${lap.active ? 'Active' : 'Rest'}</span></td>`;
+        } else {
+          const v = lap[key];
+          html += v != null
+            ? `<td>${v}${unit ? `<span class="lap-unit">${unit}</span>` : ''}</td>`
+            : '<td><span style="color:#ccc">—</span></td>';
+        }
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    pane.innerHTML = html;
+  }
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  fetch(`/api/activity/${encodeURIComponent(filename)}`)
+    .then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    })
+    .then(a => {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('detail-layout').style.display = 'grid';
+
+      document.title = `${a.name} | Training Log`;
+      document.getElementById('title').textContent = `${a.type} – ${a.name}`;
+
+      const meta = [];
+      if (a.datetime_str) meta.push(`<span>📅 ${a.datetime_str}</span>`);
+      if (a.ftp)          meta.push(`<span>⚡ FTP ${a.ftp} w</span>`);
+      document.getElementById('header-meta').innerHTML = meta.join('');
+
+      renderStats(a);
+      renderMap(a.coords || []);
+      renderChart(a.trackpoints || {});
+      renderDetailStats(a.stats || {});
+      renderIntervals(a.laps || []);
+      document.getElementById('tabs-card').style.display = 'block';
+    })
+    .catch(err => {
+      document.getElementById('loading').textContent = `Failed to load activity: ${err.message}`;
+    });
+</script>
+</body>
+</html>
