@@ -378,22 +378,32 @@
     const spdUnit  = isSwim ? '/100m' : 'kph';
     const spdLabel = isSwim ? 'Avg Pace' : 'Average Speed';
     const maxLabel = isSwim ? 'Best Pace' : 'Max Speed';
-    const stats = [
-      [a.distance_km, 'km',    'Distance',       null,        a.distance_km == null],
-      [a.moving_time, null,    'Moving Time',     null,        a.moving_time == null],
-      [a.ascent_m,    'm',     'Ascent Gain',     'dot-green', a.ascent_m == null],
-      [avgSpd, spdUnit, spdLabel, 'dot-blue', avgSpd == null],
-      [maxSpd, spdUnit, maxLabel, 'dot-blue', maxSpd == null],
-      [a.avg_active_cadence, cadUnit, 'Active Avg Cadence', 'dot-pink', a.avg_active_cadence == null],
-      [a.avg_watts,   'w',     'Avg Watts',       'dot-orange', a.avg_watts == null],
-      [a.normalized_power, 'w', 'Normalized Power', 'dot-teal', a.normalized_power == null],
-      [a.calories,    'kcal',  'Calories',        null,        a.calories == null],
-    ];
-
-    // If TSS available, replace last two
-    if (a.tss != null) {
-      stats[7] = [a.tss,          null,  'TSS',          'dot-orange', false];
-      stats[8] = [a.tss_per_hour, null,  'TSS / Hour',   'dot-orange', false];
+    let stats;
+    if (isSwim) {
+      stats = [
+        [a.distance_km, 'km',   'Distance',    null,        a.distance_km == null],
+        [a.moving_time, null,   'Moving Time', null,        a.moving_time == null],
+        [avgSpd, spdUnit, spdLabel, 'dot-blue', avgSpd == null],
+        [maxSpd, spdUnit, maxLabel, 'dot-blue', maxSpd == null],
+        [a.calories,    'kcal', 'Calories',    null,        a.calories == null],
+      ];
+    } else {
+      stats = [
+        [a.distance_km, 'km',    'Distance',           null,         a.distance_km == null],
+        [a.moving_time, null,    'Moving Time',         null,         a.moving_time == null],
+        [a.ascent_m,    'm',     'Ascent Gain',         'dot-green',  a.ascent_m == null],
+        [avgSpd, spdUnit, spdLabel,                     'dot-blue',   avgSpd == null],
+        [maxSpd, spdUnit, maxLabel,                     'dot-blue',   maxSpd == null],
+        [a.avg_active_cadence, cadUnit, 'Active Avg Cadence', 'dot-pink', a.avg_active_cadence == null],
+        [a.avg_watts,        'w',    'Avg Watts',        'dot-orange', a.avg_watts == null],
+        [a.normalized_power, 'w',   'Normalized Power', 'dot-teal',   a.normalized_power == null],
+        [a.calories,         'kcal', 'Calories',         null,         a.calories == null],
+      ];
+      // If TSS available, replace power entries
+      if (a.tss != null) {
+        stats[7] = [a.tss,          null, 'TSS',        'dot-orange', false];
+        stats[8] = [a.tss_per_hour, null, 'TSS / Hour', 'dot-orange', false];
+      }
     }
 
     // If HR available, add HR row
@@ -631,7 +641,7 @@
       ['max_speed_kph', isSwim ? 'Best Pace' : 'Max Speed',  isSwim ? null : 'kph'],
       ['avg_hr',        'Avg HR',      'bpm'],
       ['max_hr',        'Max HR',      'bpm'],
-      ['avg_watts',     'Avg Watts',   'w'],
+      ...(!isSwim ? [['avg_watts', 'Avg Watts', 'w']] : []),
       ['calories',      'Calories',    'kcal'],
       ['active',        'Active',      null],
     ];
