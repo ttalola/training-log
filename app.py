@@ -218,17 +218,33 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
     ]
 
     # ── Speed ─────────────────────────────────────────────────────────────────
-    if speeds:
-        spd_unit = 'kph' if sport != 'Swim' else 'kph'
-        result['speed'] = [
-            (summary.get('avg_speed_kph'), spd_unit, 'Average'),
-            (summary.get('max_speed_kph'), spd_unit, 'Max'),
-            (pace_str(distance, moving_s), None,     'Average Pace'),
-            (pct(speeds, 25),              spd_unit, '25% Quartile'),
-            (pct(speeds, 50),              spd_unit, '50% Quartile'),
-            (pct(speeds, 75),              spd_unit, '75% Quartile'),
-            (sd(speeds),                   spd_unit, 'Std Deviation σ'),
-        ]
+    has_swim_spd = 'Swim' in sport and (summary.get('avg_speed_kph') or summary.get('max_speed_kph'))
+    if speeds or has_swim_spd:
+        if 'Swim' in sport:
+            def kph_to_pace(kph):
+                if not kph or kph <= 0: return None
+                m, s = divmod(round(360 / kph), 60)
+                return f'{m}:{s:02d}'
+            result['speed'] = [
+                (kph_to_pace(summary.get('avg_speed_kph')), '/100m', 'Average Pace'),
+                (kph_to_pace(summary.get('max_speed_kph')), '/100m', 'Best Pace'),
+            ]
+            if speeds:
+                result['speed'] += [
+                    (kph_to_pace(pct(speeds, 25)), '/100m', '25% Quartile'),
+                    (kph_to_pace(pct(speeds, 50)), '/100m', '50% Quartile'),
+                    (kph_to_pace(pct(speeds, 75)), '/100m', '75% Quartile'),
+                ]
+        else:
+            result['speed'] = [
+                (summary.get('avg_speed_kph'), 'kph',  'Average'),
+                (summary.get('max_speed_kph'), 'kph',  'Max'),
+                (pace_str(distance, moving_s), None,   'Average Pace'),
+                (pct(speeds, 25),              'kph',  '25% Quartile'),
+                (pct(speeds, 50),              'kph',  '50% Quartile'),
+                (pct(speeds, 75),              'kph',  '75% Quartile'),
+                (sd(speeds),                   'kph',  'Std Deviation σ'),
+            ]
 
     # ── Power ────────────────────────────────────────────────────────────────
     if powers:
