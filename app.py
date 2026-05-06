@@ -247,7 +247,7 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
             ]
 
     # ── Power ────────────────────────────────────────────────────────────────
-    if powers and 'Swim' not in sport:
+    if powers and 'Swim' not in sport and 'Run' not in sport:
         np_val  = summary.get('normalized_power')
         avg_w   = summary.get('avg_watts')
         ftp     = ATHLETE_FTP
@@ -274,7 +274,7 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
         ]
 
     # ── Cadence ───────────────────────────────────────────────────────────────
-    if cads and 'Swim' not in sport:
+    if cads and 'Swim' not in sport and 'Run' not in sport:
         cad_unit = 'spm' if ('Swim' in sport or sport in ('Run', 'Walk')) else 'rpm'
         n_total  = sum(1 for r in chart_raw if r[4] is not None)
         ped_ratio = round(len(cads) / n_total, 2) if n_total else None

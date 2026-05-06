@@ -373,6 +373,7 @@
   function renderStats(a) {
     const cadUnit  = a.type.includes('Swim') ? 'spm' : 'rpm';
     const isSwim   = a.type.includes('Swim');
+    const isRun    = a.type.includes('Run');
     const avgSpd   = isSwim ? swimPace(a.avg_speed_kph) : a.avg_speed_kph;
     const maxSpd   = isSwim ? swimPace(a.max_speed_kph) : a.max_speed_kph;
     const spdUnit  = isSwim ? '/100m' : 'kph';
@@ -383,6 +384,15 @@
       stats = [
         [a.distance_km, 'km',   'Distance',    null,        a.distance_km == null],
         [a.moving_time, null,   'Moving Time', null,        a.moving_time == null],
+        [avgSpd, spdUnit, spdLabel, 'dot-blue', avgSpd == null],
+        [maxSpd, spdUnit, maxLabel, 'dot-blue', maxSpd == null],
+        [a.calories,    'kcal', 'Calories',    null,        a.calories == null],
+      ];
+    } else if (isRun) {
+      stats = [
+        [a.distance_km, 'km',   'Distance',    null,        a.distance_km == null],
+        [a.moving_time, null,   'Moving Time', null,        a.moving_time == null],
+        [a.ascent_m,    'm',    'Ascent Gain', 'dot-green', a.ascent_m == null],
         [avgSpd, spdUnit, spdLabel, 'dot-blue', avgSpd == null],
         [maxSpd, spdUnit, maxLabel, 'dot-blue', maxSpd == null],
         [a.calories,    'kcal', 'Calories',    null,        a.calories == null],
@@ -399,7 +409,6 @@
         [a.normalized_power, 'w',   'Normalized Power', 'dot-teal',   a.normalized_power == null],
         [a.calories,         'kcal', 'Calories',         null,         a.calories == null],
       ];
-      // If TSS available, replace power entries
       if (a.tss != null) {
         stats[7] = [a.tss,          null, 'TSS',        'dot-orange', false];
         stats[8] = [a.tss_per_hour, null, 'TSS / Hour', 'dot-orange', false];
@@ -641,7 +650,7 @@
       ['max_speed_kph', isSwim ? 'Best Pace' : 'Max Speed',  isSwim ? null : 'kph'],
       ['avg_hr',        'Avg HR',      'bpm'],
       ['max_hr',        'Max HR',      'bpm'],
-      ...(!isSwim ? [['avg_watts', 'Avg Watts', 'w']] : []),
+      ...(!isSwim && !isRun ? [['avg_watts', 'Avg Watts', 'w']] : []),
       ['calories',      'Calories',    'kcal'],
       ['active',        'Active',      null],
     ];
