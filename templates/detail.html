@@ -357,6 +357,12 @@
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 
+  function runPace(kph) {
+    if (kph == null || kph <= 0) return null;
+    const s = Math.round(3600 / kph);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
   function statHtml(value, unit, label, dotClass, isNull) {
     const dotHtml = dotClass ? `<span class="stat-dot ${dotClass}"></span>` : '';
     return `
@@ -374,11 +380,11 @@
     const cadUnit  = a.type.includes('Swim') ? 'spm' : 'rpm';
     const isSwim   = a.type.includes('Swim');
     const isRun    = a.type.includes('Run');
-    const avgSpd   = isSwim ? swimPace(a.avg_speed_kph) : a.avg_speed_kph;
-    const maxSpd   = isSwim ? swimPace(a.max_speed_kph) : a.max_speed_kph;
-    const spdUnit  = isSwim ? '/100m' : 'kph';
-    const spdLabel = isSwim ? 'Avg Pace' : 'Average Speed';
-    const maxLabel = isSwim ? 'Best Pace' : 'Max Speed';
+    const avgSpd   = isSwim ? swimPace(a.avg_speed_kph) : isRun ? runPace(a.avg_speed_kph) : a.avg_speed_kph;
+    const maxSpd   = isSwim ? swimPace(a.max_speed_kph) : isRun ? runPace(a.max_speed_kph) : a.max_speed_kph;
+    const spdUnit  = isSwim ? '/100m' : isRun ? '/km' : 'kph';
+    const spdLabel = isSwim || isRun ? 'Avg Pace'  : 'Average Speed';
+    const maxLabel = isSwim || isRun ? 'Best Pace' : 'Max Speed';
     let stats;
     if (isSwim) {
       stats = [
@@ -641,13 +647,14 @@
       return;
     }
     const isSwim = activityType.includes('Swim');
+    const isRun  = activityType.includes('Run');
     const cols = [
       ['lap_id',        'Lap',                          null],
       ['distance_km',   'Distance',                     'km'],
       ['moving_time',   'Moving Time',                  null],
       ['elapsed_time',  'Elapsed',                      null],
-      ['avg_speed_kph', isSwim ? 'Avg Pace'  : 'Avg Speed',  isSwim ? null : 'kph'],
-      ['max_speed_kph', isSwim ? 'Best Pace' : 'Max Speed',  isSwim ? null : 'kph'],
+      ['avg_speed_kph', isSwim || isRun ? 'Avg Pace'  : 'Avg Speed',  isSwim || isRun ? null : 'kph'],
+      ['max_speed_kph', isSwim || isRun ? 'Best Pace' : 'Max Speed',  isSwim || isRun ? null : 'kph'],
       ['avg_hr',        'Avg HR',      'bpm'],
       ['max_hr',        'Max HR',      'bpm'],
       ...(!isSwim && !isRun ? [['avg_watts', 'Avg Watts', 'w']] : []),
@@ -662,10 +669,11 @@
       for (const [key, , unit] of cols) {
         if (key === 'active') {
           html += `<td><span class="${lap.active ? 'lap-active' : 'lap-rest'}">${lap.active ? 'Active' : 'Rest'}</span></td>`;
-        } else if (isSwim && (key === 'avg_speed_kph' || key === 'max_speed_kph')) {
-          const pace = swimPace(lap[key]);
+        } else if ((isSwim || isRun) && (key === 'avg_speed_kph' || key === 'max_speed_kph')) {
+          const pace = isSwim ? swimPace(lap[key]) : runPace(lap[key]);
+          const paceUnit = isSwim ? '/100m' : '/km';
           html += pace != null
-            ? `<td>${pace}<span class="lap-unit">/100m</span></td>`
+            ? `<td>${pace}<span class="lap-unit">${paceUnit}</span></td>`
             : '<td><span style="color:#ccc">—</span></td>';
         } else {
           const v = lap[key];

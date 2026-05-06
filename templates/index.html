@@ -233,6 +233,12 @@
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 
+  function runPace(kph) {
+    if (kph == null || kph <= 0) return null;
+    const s = Math.round(3600 / kph);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
   function renderRow(a) {
     const cadUnit = a.type.includes('Swim') ? 'spm' : 'rpm';
     return `<tr>
@@ -241,7 +247,7 @@
       <td><span class="type-badge">${a.type}</span></td>
       <td>${dash(a.total_time)}</td>
       <td>${a.distance_km != null ? a.distance_km + ' km' : dash(null)}</td>
-      <td>${a.type.includes('Swim') ? (swimPace(a.avg_speed_kph) != null ? swimPace(a.avg_speed_kph) + ' /100m' : dash(null)) : (a.avg_speed_kph != null ? a.avg_speed_kph + ' kph' : dash(null))}</td>
+      <td>${a.type.includes('Swim') ? (swimPace(a.avg_speed_kph) != null ? swimPace(a.avg_speed_kph) + ' /100m' : dash(null)) : a.type.includes('Run') ? (runPace(a.avg_speed_kph) != null ? runPace(a.avg_speed_kph) + ' /km' : dash(null)) : (a.avg_speed_kph != null ? a.avg_speed_kph + ' kph' : dash(null))}</td>
       <td>${a.avg_hr != null ? a.avg_hr + ' bpm' : dash(null)}</td>
       <td>${a.max_hr != null ? a.max_hr + ' bpm' : dash(null)}</td>
       <td>${a.avg_cadence != null ? a.avg_cadence + ' ' + cadUnit : dash(null)}</td>

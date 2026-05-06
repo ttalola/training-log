@@ -219,7 +219,8 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
 
     # ── Speed ─────────────────────────────────────────────────────────────────
     has_swim_spd = 'Swim' in sport and (summary.get('avg_speed_kph') or summary.get('max_speed_kph'))
-    if speeds or has_swim_spd:
+    has_run_spd  = 'Run'  in sport and (summary.get('avg_speed_kph') or summary.get('max_speed_kph'))
+    if speeds or has_swim_spd or has_run_spd:
         if 'Swim' in sport:
             def kph_to_pace(kph):
                 if not kph or kph <= 0: return None
@@ -234,6 +235,21 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
                     (kph_to_pace(pct(speeds, 25)), '/100m', '25% Quartile'),
                     (kph_to_pace(pct(speeds, 50)), '/100m', '50% Quartile'),
                     (kph_to_pace(pct(speeds, 75)), '/100m', '75% Quartile'),
+                ]
+        elif 'Run' in sport:
+            def kph_to_run_pace(kph):
+                if not kph or kph <= 0: return None
+                m, s = divmod(round(3600 / kph), 60)
+                return f'{m}:{s:02d}'
+            result['speed'] = [
+                (kph_to_run_pace(summary.get('avg_speed_kph')), '/km', 'Average Pace'),
+                (kph_to_run_pace(summary.get('max_speed_kph')), '/km', 'Best Pace'),
+            ]
+            if speeds:
+                result['speed'] += [
+                    (kph_to_run_pace(pct(speeds, 25)), '/km', '25% Quartile'),
+                    (kph_to_run_pace(pct(speeds, 50)), '/km', '50% Quartile'),
+                    (kph_to_run_pace(pct(speeds, 75)), '/km', '75% Quartile'),
                 ]
         else:
             result['speed'] = [
