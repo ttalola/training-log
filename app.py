@@ -105,6 +105,15 @@ def db_save(filename, mtime, data):
     data['trackpoints'] = trackpoints
 
 
+def db_save_failed(filename, mtime):
+    with get_db() as db:
+        db.execute(
+            'INSERT OR REPLACE INTO activities '
+            '(filename, mtime, data_json, coords_json, trackpoints_json) VALUES (?,?,?,?,?)',
+            (filename, mtime, '{"_failed":true}', None, None)
+        )
+
+
 def db_remove_stale(active_filenames):
     with get_db() as db:
         cached = {r[0] for r in db.execute('SELECT filename FROM activities').fetchall()}
@@ -828,6 +837,12 @@ def _get_or_parse(filepath):
 def load_activities():
     if not os.path.isdir(ACTIVITIES_DIR):
         return []
+
+    # Load entire cache in one query instead of N individual lookups
+    with get_db() as db:
+        rows = db.execute('SELECT filename, mtime, data_json FROM activities').fetchall()
+    cache = {r['filename']: (r['mtime'], r['data_json']) for r in rows}
+
     filenames  = []
     activities = []
     for fname in sorted(os.listdir(ACTIVITIES_DIR)):
@@ -837,13 +852,21 @@ def load_activities():
         filenames.append(fname)
         path  = os.path.join(ACTIVITIES_DIR, fname)
         mtime = os.path.getmtime(path)
-        data  = db_get_summary(fname, mtime)
-        if data is None:
+
+        cached_mtime, cached_json = cache.get(fname, (None, None))
+        if cached_mtime == mtime and cached_json is not None:
+            data = json.loads(cached_json)
+            if data.get('_failed'):
+                continue
+        else:
             data = _parse(path)
             if data:
                 db_save(fname, mtime, data)
-        if data:
-            activities.append({k: v for k, v in data.items() if k not in ('coords', 'trackpoints', 'laps', 'stats', 'splits')})
+            else:
+                db_save_failed(fname, mtime)
+                continue
+
+        activities.append({k: v for k, v in data.items() if k not in ('coords', 'trackpoints', 'laps', 'stats', 'splits')})
     db_remove_stale(filenames)
     activities.sort(key=lambda x: x['date_sort'], reverse=True)
     return activities
