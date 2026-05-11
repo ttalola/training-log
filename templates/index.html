@@ -424,9 +424,7 @@
           showStatus('error', data.error);
         } else {
           showStatus('success', data.message);
-          if (data.imported > 0) {
-            fetch('/api/activities').then(r => r.json()).then(d => { allActivities = d; page = 1; render(); });
-          }
+          fetch('/api/activities').then(r => r.json()).then(d => { allActivities = d; page = 1; render(); });
         }
       })
       .catch(err => showStatus('error', `Sync failed: ${err.message}`))
