@@ -125,6 +125,61 @@ def db_save_failed(filename, mtime):
         )
 
 
+def db_activity_exists(date_sort, activity_type, exclude_filename=None):
+    """Return True if a real (non-failed) activity with the same start minute and type is cached."""
+    minute = date_sort[:16]
+    with get_db() as db:
+        if exclude_filename:
+            row = db.execute(
+                "SELECT 1 FROM activities "
+                "WHERE filename != ? "
+                "AND json_extract(data_json, '$._failed') IS NULL "
+                "AND json_extract(data_json, '$.date_sort') LIKE ? "
+                "AND json_extract(data_json, '$.type') = ?",
+                (exclude_filename, minute + '%', activity_type)
+            ).fetchone()
+        else:
+            row = db.execute(
+                "SELECT 1 FROM activities "
+                "WHERE json_extract(data_json, '$._failed') IS NULL "
+                "AND json_extract(data_json, '$.date_sort') LIKE ? "
+                "AND json_extract(data_json, '$.type') = ?",
+                (minute + '%', activity_type)
+            ).fetchone()
+    return row is not None
+
+
+def deduplicate_activities():
+    """Find groups of same start-minute + type, keep the richest file, delete the rest.
+    Returns the number of duplicates removed."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT filename, trackpoints_json, data_json FROM activities "
+            "WHERE json_extract(data_json, '$._failed') IS NULL"
+        ).fetchall()
+
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for row in rows:
+        d   = json.loads(row['data_json'])
+        key = (d.get('date_sort', '')[:16], d.get('type', ''))
+        groups[key].append((row['filename'], len(row['trackpoints_json'] or '')))
+
+    removed = 0
+    for entries in groups.values():
+        if len(entries) <= 1:
+            continue
+        entries.sort(key=lambda x: x[1], reverse=True)   # best (most data) first
+        for fname, _ in entries[1:]:
+            with get_db() as db:
+                db.execute('DELETE FROM activities WHERE filename=?', (fname,))
+            path = os.path.join(ACTIVITIES_DIR, fname)
+            if os.path.isfile(path):
+                os.remove(path)
+            removed += 1
+    return removed
+
+
 def db_remove_stale(active_filenames):
     with get_db() as db:
         cached = {r[0] for r in db.execute('SELECT filename FROM activities').fetchall()}
@@ -872,6 +927,9 @@ def load_activities():
         else:
             data = _parse(path)
             if data:
+                if db_activity_exists(data['date_sort'], data['type'], exclude_filename=fname):
+                    db_save_failed(fname, mtime)
+                    continue
                 db_save(fname, mtime, data)
             else:
                 db_save_failed(fname, mtime)
@@ -976,6 +1034,12 @@ def api_import():
     return jsonify({'results': results})
 
 
+@app.route('/api/deduplicate', methods=['POST'])
+def api_deduplicate():
+    removed = deduplicate_activities()
+    return jsonify({'removed': removed, 'message': f'{removed} duplicate{"s" if removed != 1 else ""} removed'})
+
+
 @app.route('/api/sync', methods=['POST'])
 def api_sync():
     imported, skipped, error = sync_garmin()
@@ -1009,6 +1073,9 @@ def api_activity(filename):
 if __name__ == '__main__':
     os.makedirs(ACTIVITIES_DIR, exist_ok=True)
     init_db()
+    removed = deduplicate_activities()
+    if removed:
+        print(f'Removed {removed} duplicate activities')
     print(f'\nActivities directory: {ACTIVITIES_DIR}')
     print('Open http://localhost:8080\n')
     app.run(debug=True, port=8080)
