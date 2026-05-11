@@ -1,17 +1,28 @@
+import io
 import json
 import math
 import os
 import sqlite3
 import statistics as _stats
+import zipfile
 from datetime import datetime, timezone
 
 from flask import Flask, abort, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 app = Flask(__name__)
 
-ACTIVITIES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'activities')
-DB_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'activities.db')
+ACTIVITIES_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'activities')
+DB_PATH         = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'activities.db')
+GARMIN_EMAIL    = os.environ.get('GARMIN_EMAIL')
+GARMIN_PASSWORD = os.environ.get('GARMIN_PASSWORD')
+GARMIN_TOKENS   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'garmin_tokens')
 
 # Set your FTP/threshold power in watts to enable TSS/IF/VI calculation (e.g. 275)
 ATHLETE_FTP = None
@@ -872,6 +883,65 @@ def load_activities():
     return activities
 
 
+# ── Garmin Connect sync ───────────────────────────────────────────────────────
+
+def sync_garmin():
+    try:
+        from garminconnect import Garmin
+    except ImportError:
+        return 0, 0, 'garminconnect not installed — run: pip install garminconnect'
+
+    if not GARMIN_EMAIL or not GARMIN_PASSWORD:
+        return 0, 0, 'GARMIN_EMAIL and GARMIN_PASSWORD not set in .env'
+
+    try:
+        api = Garmin(email=GARMIN_EMAIL, password=GARMIN_PASSWORD)
+        api.login(tokenstore=GARMIN_TOKENS)
+    except Exception as e:
+        return 0, 0, f'Login failed: {e}. Run garmin_setup.py to re-authenticate.'
+
+    # Collect activity IDs already on disk to skip re-downloads
+    existing_ids = set()
+    if os.path.isdir(ACTIVITIES_DIR):
+        for fname in os.listdir(ACTIVITIES_DIR):
+            name = fname.lower().rsplit('.', 1)[0]
+            part = name.rsplit('_', 1)[-1]
+            if part.isdigit() and len(part) >= 8:
+                existing_ids.add(part)
+
+    garmin_activities = api.get_activities(0, 100)
+    imported = skipped = 0
+    os.makedirs(ACTIVITIES_DIR, exist_ok=True)
+
+    for act in garmin_activities:
+        activity_id = str(act['activityId'])
+        if activity_id in existing_ids:
+            skipped += 1
+            continue
+        try:
+            data = api.download_activity(
+                int(activity_id),
+                dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL,
+            )
+            # ORIGINAL comes as a zip; extract the FIT inside
+            if data[:2] == b'PK':
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    fits = [n for n in zf.namelist() if n.lower().endswith('.fit')]
+                    if not fits:
+                        skipped += 1
+                        continue
+                    data = zf.read(fits[0])
+            path = os.path.join(ACTIVITIES_DIR, f'garmin_{activity_id}.fit')
+            with open(path, 'wb') as f:
+                f.write(data)
+            imported += 1
+        except Exception as e:
+            print(f'Failed to download activity {activity_id}: {e}')
+            skipped += 1
+
+    return imported, skipped, None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -904,6 +974,18 @@ def api_import():
         results.append({'filename': fname, 'status': 'ok'})
 
     return jsonify({'results': results})
+
+
+@app.route('/api/sync', methods=['POST'])
+def api_sync():
+    imported, skipped, error = sync_garmin()
+    if error:
+        return jsonify({'error': error}), 400
+    noun = 'activity' if imported == 1 else 'activities'
+    msg  = f'{imported} new {noun} imported'
+    if skipped:
+        msg += f', {skipped} already up to date'
+    return jsonify({'imported': imported, 'skipped': skipped, 'message': msg})
 
 
 @app.route('/api/activities')

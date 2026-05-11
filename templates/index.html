@@ -24,6 +24,8 @@
   }
   header h1 { font-size: 18px; font-weight: 600; color: #333; }
 
+  .header-actions { display: flex; gap: 8px; }
+
   .import-btn {
     background: #2aab8e;
     color: #fff;
@@ -37,6 +39,20 @@
   }
   .import-btn:hover:not(:disabled) { background: #249478; }
   .import-btn:disabled { background: #b0b0b0; cursor: default; }
+
+  .sync-btn {
+    background: none;
+    color: #2aab8e;
+    border: 1px solid #2aab8e;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .sync-btn:hover:not(:disabled) { background: #f0faf8; }
+  .sync-btn:disabled { color: #b0b0b0; border-color: #b0b0b0; cursor: default; }
 
   .import-status {
     padding: 10px 32px;
@@ -165,7 +181,10 @@
 
 <header>
   <h1>Training Log</h1>
-  <button class="import-btn" id="import-btn">+ Import</button>
+  <div class="header-actions">
+    <button class="sync-btn" id="sync-btn">↻ Sync Garmin</button>
+    <button class="import-btn" id="import-btn">+ Import</button>
+  </div>
 </header>
 <div class="import-status" id="import-status"></div>
 <input type="file" id="file-input" multiple accept=".tcx,.fit" style="display:none">
@@ -387,6 +406,31 @@
     document.body.classList.remove('drag-active');
     const files = [...e.dataTransfer.files].filter(f => /\.(tcx|fit)$/i.test(f.name));
     if (files.length) uploadFiles(files);
+  });
+
+  // ── Garmin Sync ─────────────────────────────────────────────────────────────
+
+  const syncBtn = document.getElementById('sync-btn');
+
+  syncBtn.addEventListener('click', () => {
+    syncBtn.disabled = true;
+    importBtn.disabled = true;
+    showStatus('uploading', 'Syncing with Garmin Connect…');
+
+    fetch('/api/sync', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          showStatus('error', data.error);
+        } else {
+          showStatus('success', data.message);
+          if (data.imported > 0) {
+            fetch('/api/activities').then(r => r.json()).then(d => { allActivities = d; page = 1; render(); });
+          }
+        }
+      })
+      .catch(err => showStatus('error', `Sync failed: ${err.message}`))
+      .finally(() => { syncBtn.disabled = false; importBtn.disabled = false; });
   });
 
   // Load data
