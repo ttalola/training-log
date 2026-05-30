@@ -130,6 +130,47 @@
     color: #ccc;
   }
 
+  /* Filter / search bar */
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 13px;
+    color: #666;
+  }
+  .filter-field { display: flex; align-items: center; gap: 6px; }
+  .filter-field label { white-space: nowrap; color: #888; }
+  .filter-input, .filter-select, .filter-date {
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 5px 8px;
+    font-size: 13px;
+    color: #444;
+    background: #fff;
+  }
+  .filter-input { min-width: 220px; }
+  .filter-input:focus, .filter-select:focus, .filter-date:focus {
+    outline: none;
+    border-color: #2aab8e;
+    box-shadow: 0 0 0 2px rgba(42,171,142,0.15);
+  }
+  .filter-select, .filter-date { cursor: pointer; }
+  .filter-clear {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 5px 10px;
+    font-size: 13px;
+    color: #666;
+    cursor: pointer;
+  }
+  .filter-clear:hover { background: #f5f5f5; }
+  .filter-spacer { flex: 1; }
+  .filter-count { white-space: nowrap; color: #999; }
+
   /* Footer / pagination */
   .table-footer {
     display: flex;
@@ -191,6 +232,28 @@
 
 <main>
   <div class="card">
+    <div class="filter-bar">
+      <div class="filter-field">
+        <input type="search" class="filter-input" id="filter-text" placeholder="Search by name…">
+      </div>
+      <div class="filter-field">
+        <label for="filter-type">Type</label>
+        <select class="filter-select" id="filter-type">
+          <option value="">All</option>
+        </select>
+      </div>
+      <div class="filter-field">
+        <label for="filter-from">From</label>
+        <input type="date" class="filter-date" id="filter-from">
+      </div>
+      <div class="filter-field">
+        <label for="filter-to">To</label>
+        <input type="date" class="filter-date" id="filter-to">
+      </div>
+      <button class="filter-clear" id="filter-clear">Clear</button>
+      <span class="filter-spacer"></span>
+      <span class="filter-count" id="filter-count"></span>
+    </div>
     <div class="table-wrap">
       <table id="activities-table">
         <thead>
@@ -238,9 +301,56 @@
   let page     = 1;
   let perPage  = 10;
 
+  // Search / filter state
+  let searchText = '';
+  let typeFilter = '';   // '' = all types
+  let dateFrom   = '';    // 'YYYY-MM-DD'
+  let dateTo     = '';    // 'YYYY-MM-DD'
+
+  // Restore list view state (page, sort, items-per-page, filters) so returning
+  // from an activity detail view lands on the same page and filters intact.
+  const STATE_KEY = 'training-log:list-state';
+  (function restoreState() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(STATE_KEY) || '{}');
+      if (saved.sortKey) sortKey = saved.sortKey;
+      if (saved.sortDir) sortDir = saved.sortDir;
+      if (saved.page)    page    = saved.page;
+      if (saved.perPage) perPage = saved.perPage;
+      if (saved.searchText) searchText = saved.searchText;
+      if (saved.typeFilter) typeFilter = saved.typeFilter;
+      if (saved.dateFrom)   dateFrom   = saved.dateFrom;
+      if (saved.dateTo)     dateTo     = saved.dateTo;
+    } catch (e) { /* ignore corrupt state */ }
+  })();
+
+  function saveState() {
+    try {
+      sessionStorage.setItem(STATE_KEY, JSON.stringify({
+        sortKey, sortDir, page, perPage, searchText, typeFilter, dateFrom, dateTo,
+      }));
+    } catch (e) { /* storage unavailable */ }
+  }
+
   const tbody    = document.getElementById('table-body');
   const pageInfo = document.getElementById('page-info');
   const perPageEl = document.getElementById('per-page');
+
+  const filterText  = document.getElementById('filter-text');
+  const filterType  = document.getElementById('filter-type');
+  const filterFrom  = document.getElementById('filter-from');
+  const filterTo    = document.getElementById('filter-to');
+  const filterCount = document.getElementById('filter-count');
+
+  // Reflect the restored per-page value in the selector
+  if ([...perPageEl.options].some(o => parseInt(o.value) === perPage)) {
+    perPageEl.value = String(perPage);
+  }
+
+  // Reflect restored filter values in the inputs (type select filled later)
+  filterText.value = searchText;
+  filterFrom.value = dateFrom;
+  filterTo.value   = dateTo;
 
   function dash(v) {
     return (v === null || v === undefined || v === '') ? '<span class="empty">—</span>' : v;
@@ -276,6 +386,45 @@
     </tr>`;
   }
 
+  // Local calendar date (YYYY-MM-DD) of an activity, matching the displayed date.
+  function localYMD(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const m   = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${day}`;
+  }
+
+  function filtered(arr) {
+    const q = searchText.trim().toLowerCase();
+    return arr.filter(a => {
+      if (q && !(a.name || '').toLowerCase().includes(q)) return false;
+      if (typeFilter && a.type !== typeFilter) return false;
+      if (dateFrom || dateTo) {
+        const ymd = localYMD(a.date_sort);
+        if (dateFrom && ymd < dateFrom) return false;
+        if (dateTo && ymd > dateTo) return false;
+      }
+      return true;
+    });
+  }
+
+  // Fill the type dropdown from the activities actually present.
+  function populateTypes() {
+    const types = [...new Set(allActivities.map(a => a.type).filter(Boolean))].sort();
+    filterType.innerHTML = '<option value="">All</option>'
+      + types.map(t => `<option value="${t}">${t}</option>`).join('');
+    if (!types.includes(typeFilter)) typeFilter = '';
+    filterType.value = typeFilter;
+  }
+
+  function setActivities(data, resetPage) {
+    allActivities = data;
+    populateTypes();
+    if (resetPage) page = 1;
+    render();
+  }
+
   function sorted(arr) {
     return [...arr].sort((a, b) => {
       let av = a[sortKey], bv = b[sortKey];
@@ -287,21 +436,28 @@
   }
 
   function render() {
-    const data  = sorted(allActivities);
+    const data  = sorted(filtered(allActivities));
     const total = data.length;
     const pages = Math.max(1, Math.ceil(total / perPage));
-    page = Math.min(page, pages);
+    page = Math.max(1, Math.min(page, pages));
+    saveState();
     const start = (page - 1) * perPage;
     const slice = data.slice(start, start + perPage);
 
+    const hasFilter = searchText || typeFilter || dateFrom || dateTo;
     if (total === 0) {
-      tbody.innerHTML = '<tr><td colspan="12" class="no-data">No activities found. Drop .tcx or .fit files in the <code>activities/</code> folder.</td></tr>';
+      tbody.innerHTML = hasFilter
+        ? '<tr><td colspan="12" class="no-data">No activities match the current filters.</td></tr>'
+        : '<tr><td colspan="12" class="no-data">No activities found. Drop .tcx or .fit files in the <code>activities/</code> folder.</td></tr>';
     } else {
       tbody.innerHTML = slice.map(renderRow).join('');
     }
 
     const end = Math.min(start + perPage, total);
     pageInfo.textContent = total ? `${start + 1}–${end} of ${total}` : '';
+    filterCount.textContent = allActivities.length
+      ? (hasFilter ? `${total} of ${allActivities.length} activities` : `${allActivities.length} activities`)
+      : '';
 
     document.getElementById('btn-first').disabled = page <= 1;
     document.getElementById('btn-prev').disabled  = page <= 1;
@@ -337,12 +493,25 @@
   document.getElementById('btn-prev').addEventListener('click',  () => { page--; render(); });
   document.getElementById('btn-next').addEventListener('click',  () => { page++; render(); });
   document.getElementById('btn-last').addEventListener('click',  () => {
-    page = Math.ceil(allActivities.length / perPage);
+    page = Math.ceil(filtered(allActivities).length / perPage);
     render();
   });
 
   perPageEl.addEventListener('change', () => {
     perPage = parseInt(perPageEl.value);
+    page = 1;
+    render();
+  });
+
+  // ── Search / filter ───────────────────────────────────────────────────────
+  filterText.addEventListener('input',  () => { searchText = filterText.value; page = 1; render(); });
+  filterType.addEventListener('change', () => { typeFilter = filterType.value; page = 1; render(); });
+  filterFrom.addEventListener('change', () => { dateFrom   = filterFrom.value; page = 1; render(); });
+  filterTo.addEventListener('change',   () => { dateTo     = filterTo.value;   page = 1; render(); });
+  document.getElementById('filter-clear').addEventListener('click', () => {
+    searchText = typeFilter = dateFrom = dateTo = '';
+    filterText.value = filterFrom.value = filterTo.value = '';
+    filterType.value = '';
     page = 1;
     render();
   });
@@ -375,7 +544,7 @@
         if (skip > 0) msg += `, ${skip} skipped (not TCX/FIT)`;
         showStatus('success', msg);
         if (ok > 0) {
-          fetch('/api/activities').then(r => r.json()).then(d => { allActivities = d; page = 1; render(); });
+          fetch('/api/activities').then(r => r.json()).then(d => setActivities(d, true));
         }
       })
       .catch(err => showStatus('error', `Upload failed: ${err.message}`))
@@ -424,7 +593,7 @@
           showStatus('error', data.error);
         } else {
           showStatus('success', data.message);
-          fetch('/api/activities').then(r => r.json()).then(d => { allActivities = d; page = 1; render(); });
+          fetch('/api/activities').then(r => r.json()).then(d => setActivities(d, true));
         }
       })
       .catch(err => showStatus('error', `Sync failed: ${err.message}`))
@@ -434,10 +603,7 @@
   // Load data
   fetch('/api/activities')
     .then(r => r.json())
-    .then(data => {
-      allActivities = data;
-      render();
-    })
+    .then(data => setActivities(data, false))
     .catch(() => {
       tbody.innerHTML = '<tr><td colspan="12" class="no-data">Failed to load activities.</td></tr>';
     });
