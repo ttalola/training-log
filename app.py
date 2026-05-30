@@ -75,6 +75,18 @@ def init_db():
                 pass
 
 
+def _cache_is_stale(data):
+    """True if a cached entry predates the multisport parser fix and must be
+    re-parsed. Old triathlon/multisport entries summarised only the first leg,
+    so their whole-event moving time exceeds the single-leg elapsed time —
+    impossible for a correctly parsed activity (moving ≤ elapsed by definition)."""
+    if not data or data.get('_failed') or data.get('legs'):
+        return False
+    t = data.get('total_time_s')
+    m = data.get('moving_time_s')
+    return bool(t and m and m > t * 1.1)
+
+
 def db_get_summary(filename, mtime):
     with get_db() as db:
         row = db.execute(
@@ -97,6 +109,8 @@ def db_get_detail(filename, mtime):
         return None
     data = json.loads(row['data_json'])
     if 'laps' not in data or 'splits' not in data:
+        return None
+    if _cache_is_stale(data):
         return None
     data['coords']      = json.loads(row['coords_json'])      if row['coords_json']      else []
     data['trackpoints'] = json.loads(row['trackpoints_json']) if row['trackpoints_json'] else {}
@@ -696,13 +710,87 @@ def parse_tcx(filepath):
 
 # ── FIT parser ────────────────────────────────────────────────────────────────
 
+def leg_pace(label, kph):
+    """Sport-appropriate pace/speed string for one multisport leg."""
+    if not kph or kph <= 0:
+        return None
+    if 'Swim' in label:
+        s = round(360 / kph)
+        return f'{s // 60}:{s % 60:02d} /100m'
+    if 'Run' in label or 'Walk' in label:
+        s = round(3600 / kph)
+        return f'{s // 60}:{s % 60:02d} /km'
+    if label == 'Transition':
+        return None
+    return f'{kph} kph'
+
+
+def build_multisport(sessions):
+    """Aggregate a multisport FIT file's per-sport sessions (swim/T1/bike/T2/run …)
+    into one sensible summary plus a per-leg breakdown. Returns
+    (label, legs, total_time_s, total_dist_m, agg_session)."""
+    legs        = []
+    total_time  = 0.0
+    total_dist  = 0.0
+    total_cal   = 0
+    hr_weighted = 0.0
+    hr_weight   = 0.0
+    max_hr      = None
+    sports      = []   # distinct non-transition sports, in order encountered
+    for s in sessions:
+        sport_raw = str(s.get('sport', ''))
+        is_trans  = sport_raw == 'transition'
+        label     = 'Transition' if is_trans else SPORT_LABELS.get(sport_raw, sport_raw.capitalize())
+        if not is_trans and label not in sports:
+            sports.append(label)
+        t   = float(s.get('total_elapsed_time') or s.get('total_timer_time') or 0)
+        d   = float(s.get('total_distance') or 0)
+        spd = s.get('enhanced_avg_speed') or s.get('avg_speed')
+        ahr = s.get('avg_heart_rate')
+        mhr = s.get('max_heart_rate')
+        total_time += t
+        total_dist += d
+        total_cal  += int(s.get('total_calories') or 0)
+        if ahr and t:
+            hr_weighted += float(ahr) * t
+            hr_weight   += t
+        if mhr and (max_hr is None or int(mhr) > max_hr):
+            max_hr = int(mhr)
+        kph = round(float(spd) * 3.6, 1) if spd else (round(d / t * 3.6, 1) if (t and d) else None)
+        legs.append({
+            'type':        label,
+            'distance_km': round(d / 1000, 2) if d else None,
+            'time':        fmt_time(t) if t else None,
+            'time_s':      t or None,
+            'pace':        leg_pace(label, kph),
+            'avg_hr':      int(ahr) if ahr else None,
+        })
+
+    sport_set = set(sports)
+    if {'Swim', 'Ride', 'Run'}.issubset(sport_set):
+        label = 'Triathlon'
+    elif sport_set == {'Run', 'Ride'}:
+        label = 'Duathlon'
+    elif sport_set == {'Swim', 'Ride'}:
+        label = 'Aquabike'
+    else:
+        label = 'Multisport'
+
+    agg = {
+        'avg_heart_rate': round(hr_weighted / hr_weight) if hr_weight else None,
+        'max_heart_rate': max_hr,
+        'total_calories': total_cal or None,
+    }
+    return label, legs, total_time, total_dist, agg
+
+
 def parse_fit(filepath):
     from fitparse import FitFile
-    ff      = FitFile(filepath)
-    session = None
-    for msg in ff.get_messages('session'):
-        session = {f.name: f.value for f in msg.fields}
-        break
+    ff       = FitFile(filepath)
+    sessions = [{f.name: f.value for f in msg.fields} for msg in ff.get_messages('session')]
+    if not sessions:
+        return None
+    session = sessions[0]
     if not session:
         return None
 
@@ -726,11 +814,17 @@ def parse_fit(filepath):
     start_utc   = start_time.replace(tzinfo=timezone.utc)
     start_local = start_utc.astimezone()
 
-    total_time = session.get('total_elapsed_time') or session.get('total_timer_time')
-    total_dist = session.get('total_distance')
-    avg_speed  = session.get('enhanced_avg_speed') or session.get('avg_speed')
-    max_speed  = session.get('enhanced_max_speed') or session.get('max_speed')
-    np_val     = session.get('normalized_power') or None
+    legs = None
+    if len(sessions) > 1:
+        # Multisport (triathlon etc.): summary covers the whole event, not just leg 1.
+        sport_label, legs, total_time, total_dist, session = build_multisport(sessions)
+        avg_speed = max_speed = np_val = None
+    else:
+        total_time = session.get('total_elapsed_time') or session.get('total_timer_time')
+        total_dist = session.get('total_distance')
+        avg_speed  = session.get('enhanced_avg_speed') or session.get('avg_speed')
+        max_speed  = session.get('enhanced_max_speed') or session.get('max_speed')
+        np_val     = session.get('normalized_power') or None
 
     def nz(v): return v if v else None
 
@@ -852,6 +946,7 @@ def parse_fit(filepath):
         'tss':                tss,
         'tss_per_hour':       tss_per_hour,
         'ftp':                ATHLETE_FTP,
+        'legs':               legs,
         'laps':               laps_data,
         'splits':             compute_best_splits(splits_raw, sport_label),
         'coords':             coords,
@@ -920,8 +1015,9 @@ def load_activities():
         mtime = os.path.getmtime(path)
 
         cached_mtime, cached_json = cache.get(fname, (None, None))
-        if cached_mtime == mtime and cached_json is not None:
-            data = json.loads(cached_json)
+        cached_data = json.loads(cached_json) if (cached_mtime == mtime and cached_json is not None) else None
+        if cached_data is not None and not _cache_is_stale(cached_data):
+            data = cached_data
             if data.get('_failed'):
                 continue
         else:

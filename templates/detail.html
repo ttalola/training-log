@@ -337,10 +337,12 @@
   <div class="tabs-card" id="tabs-card" style="display:none">
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="tab-stats">Stats</button>
+      <button class="tab-btn" data-tab="tab-legs" id="legs-tab-btn" style="display:none">Legs</button>
       <button class="tab-btn" data-tab="tab-intervals">Intervals</button>
       <button class="tab-btn" data-tab="tab-splits">Best Splits</button>
     </div>
     <div class="tab-pane active" id="tab-stats"></div>
+    <div class="tab-pane" id="tab-legs"></div>
     <div class="tab-pane" id="tab-intervals"></div>
     <div class="tab-pane" id="tab-splits"></div>
   </div>
@@ -379,6 +381,7 @@
   }
 
   function renderStats(a) {
+    const isMulti  = !!(a.legs && a.legs.length);
     const cadUnit  = a.type.includes('Swim') ? 'spm' : 'rpm';
     const isSwim   = a.type.includes('Swim');
     const isRun    = a.type.includes('Run');
@@ -388,7 +391,17 @@
     const spdLabel = isSwim || isRun ? 'Avg Pace'  : 'Average Speed';
     const maxLabel = isSwim || isRun ? 'Best Pace' : 'Max Speed';
     let stats;
-    if (isSwim) {
+    if (isMulti) {
+      // Combined pace/speed is meaningless across sports — show event totals,
+      // per-leg detail lives in the Legs tab.
+      stats = [
+        [a.distance_km, 'km',   'Total Distance', null,        a.distance_km == null],
+        [a.total_time,  null,   'Total Time',     null,        a.total_time == null],
+        [a.moving_time, null,   'Moving Time',    null,        a.moving_time == null],
+        [a.ascent_m,    'm',    'Ascent Gain',    'dot-green', a.ascent_m == null],
+        [a.calories,    'kcal', 'Calories',       null,        a.calories == null],
+      ];
+    } else if (isSwim) {
       stats = [
         [a.distance_km, 'km',   'Distance',    null,        a.distance_km == null],
         [a.moving_time, null,   'Moving Time', null,        a.moving_time == null],
@@ -698,6 +711,31 @@
     pane.innerHTML = html;
   }
 
+  function renderLegs(legs) {
+    const btn  = document.getElementById('legs-tab-btn');
+    const pane = document.getElementById('tab-legs');
+    if (!legs || legs.length === 0) { btn.style.display = 'none'; return; }
+    btn.style.display = '';
+    const cell = v => v != null ? v : '<span style="color:#ccc">—</span>';
+    let html = '<div class="intervals-wrap"><table class="intervals-table"><thead><tr>'
+      + '<th>Leg</th><th>Sport</th><th>Distance</th><th>Time</th><th>Pace</th><th>Avg HR</th>'
+      + '</tr></thead><tbody>';
+    legs.forEach((l, i) => {
+      const dist = l.distance_km != null ? `${l.distance_km}<span class="lap-unit">km</span>` : null;
+      const hr   = l.avg_hr != null ? `${l.avg_hr}<span class="lap-unit">bpm</span>` : null;
+      html += '<tr>'
+        + `<td>${i + 1}</td>`
+        + `<td>${l.type}</td>`
+        + `<td>${cell(dist)}</td>`
+        + `<td>${cell(l.time)}</td>`
+        + `<td>${cell(l.pace)}</td>`
+        + `<td>${cell(hr)}</td>`
+        + '</tr>';
+    });
+    html += '</tbody></table></div>';
+    pane.innerHTML = html;
+  }
+
   function renderIntervals(laps, activityType = '') {
     const pane = document.getElementById('tab-intervals');
     if (!laps || laps.length === 0) {
@@ -776,6 +814,7 @@
       renderMap(a.coords || []);
       renderChart(a.trackpoints || {});
       renderDetailStats(a.stats || {});
+      renderLegs(a.legs || []);
       renderIntervals(a.laps || [], a.type);
       renderSplits(a.splits || [], a.type);
       document.getElementById('tabs-card').style.display = 'block';
