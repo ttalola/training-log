@@ -74,6 +74,28 @@ def init_db():
             except Exception:
                 pass
 
+        # Imported metadata (e.g. Strava title / private note / description),
+        # keyed by start minute so it survives the parse cache being rebuilt.
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS activity_meta (
+                activity_key TEXT PRIMARY KEY,
+                name         TEXT,
+                note         TEXT,
+                description  TEXT,
+                source       TEXT
+            )
+        ''')
+
+        # File-less activities (e.g. Strava manual entries / unsupported formats)
+        # that have no .fit/.tcx on disk — stored as a ready-made summary.
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS external_activities (
+                id           TEXT PRIMARY KEY,
+                activity_key TEXT,
+                data_json    TEXT NOT NULL
+            )
+        ''')
+
 
 def _cache_is_stale(data):
     """True if a cached entry predates the multisport parser fix and must be
@@ -85,6 +107,81 @@ def _cache_is_stale(data):
     t = data.get('total_time_s')
     m = data.get('moving_time_s')
     return bool(t and m and m > t * 1.1)
+
+
+# ── Activity metadata & file-less (external) activities ───────────────────────
+
+def _activity_key(date_sort):
+    """Stable per-activity key: start time truncated to the minute (UTC)."""
+    return (date_sort or '')[:16]
+
+
+def load_meta_map():
+    """Return {activity_key: {name, note, description, source}} for all metadata."""
+    with get_db() as db:
+        rows = db.execute(
+            'SELECT activity_key, name, note, description, source FROM activity_meta'
+        ).fetchall()
+    return {r['activity_key']: dict(r) for r in rows}
+
+
+def apply_meta(summary, meta_map):
+    """Merge imported metadata (Strava title/note/description) onto a summary in place."""
+    m = meta_map.get(_activity_key(summary.get('date_sort')))
+    if m:
+        if m.get('name'):        summary['name']        = m['name']
+        if m.get('note'):        summary['note']        = m['note']
+        if m.get('description'): summary['description'] = m['description']
+    summary['has_note'] = bool(m and (m.get('note') or m.get('description')))
+    return summary
+
+
+def set_activity_meta(date_sort, name=None, note=None, description=None, source='strava'):
+    """Upsert metadata for the activity starting at date_sort (used by the Strava importer).
+    Only non-empty fields overwrite existing values."""
+    key = _activity_key(date_sort)
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO activity_meta (activity_key, name, note, description, source) '
+            'VALUES (?,?,?,?,?) '
+            'ON CONFLICT(activity_key) DO UPDATE SET '
+            '  name=COALESCE(excluded.name, activity_meta.name), '
+            '  note=COALESCE(excluded.note, activity_meta.note), '
+            '  description=COALESCE(excluded.description, activity_meta.description), '
+            '  source=excluded.source',
+            (key, name or None, note or None, description or None, source)
+        )
+
+
+def load_external_activities():
+    """Return summary dicts for all file-less activities."""
+    with get_db() as db:
+        rows = db.execute('SELECT data_json FROM external_activities').fetchall()
+    return [json.loads(r['data_json']) for r in rows]
+
+
+def get_external_activity(ext_id):
+    with get_db() as db:
+        row = db.execute(
+            'SELECT data_json FROM external_activities WHERE id=?', (ext_id,)
+        ).fetchone()
+    return json.loads(row['data_json']) if row else None
+
+
+def add_external_activity(ext_id, data):
+    """Upsert a file-less activity. `data` is a full summary dict including date_sort."""
+    with get_db() as db:
+        db.execute(
+            'INSERT OR REPLACE INTO external_activities (id, activity_key, data_json) '
+            'VALUES (?,?,?)',
+            (ext_id, _activity_key(data.get('date_sort')), json.dumps(data))
+        )
+
+
+def existing_activity_keys():
+    """Set of start-minute keys for every known activity (file-based + external).
+    Used by the importer to detect duplicates."""
+    return {_activity_key(a.get('date_sort')) for a in load_activities()}
 
 
 def db_get_summary(filename, mtime):
@@ -1033,6 +1130,19 @@ def load_activities():
 
         activities.append({k: v for k, v in data.items() if k not in ('coords', 'trackpoints', 'laps', 'stats', 'splits')})
     db_remove_stale(filenames)
+
+    # Merge in file-less (external) activities, skipping any that duplicate a
+    # file-based one at the same start minute.
+    file_keys = {_activity_key(a.get('date_sort')) for a in activities}
+    for ext in load_external_activities():
+        if _activity_key(ext.get('date_sort')) not in file_keys:
+            activities.append(ext)
+
+    # Overlay imported metadata (Strava title / private note / description)
+    meta_map = load_meta_map()
+    for a in activities:
+        apply_meta(a, meta_map)
+
     activities.sort(key=lambda x: x['date_sort'], reverse=True)
     return activities
 
@@ -1156,11 +1266,15 @@ def api_activities():
 @app.route('/api/activity/<path:filename>')
 def api_activity(filename):
     path = os.path.join(ACTIVITIES_DIR, filename)
-    if not os.path.isfile(path):
-        abort(404)
-    data = _get_or_parse(path)
-    if not data:
-        abort(500)
+    if os.path.isfile(path):
+        data = _get_or_parse(path)
+        if not data:
+            abort(500)
+    else:
+        data = get_external_activity(filename)
+        if not data:
+            abort(404)
+    apply_meta(data, load_meta_map())
     return jsonify(data)
 
 

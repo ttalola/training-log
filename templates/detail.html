@@ -217,6 +217,28 @@
     margin-top: 3px;
   }
 
+  /* Notes (imported from Strava) */
+  .notes-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin-top: 20px;
+  }
+  .note-block + .note-block { margin-top: 14px; }
+  .note-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #888;
+    margin-bottom: 4px;
+  }
+  .note-text {
+    font-size: 14px;
+    color: #333;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
   /* Chart */
   .chart-card {
     background: #fff;
@@ -328,6 +350,9 @@
 
   </div>
 
+  <!-- Notes (imported) -->
+  <div class="notes-card" id="notes-card" style="display:none"></div>
+
   <!-- Chart -->
   <div class="chart-card" id="chart-card" style="display:none">
     <div id="chart"></div>
@@ -354,6 +379,21 @@
   let map = null;
 
   function dash(v) { return v != null ? v : '—'; }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function renderNotes(a) {
+    const parts = [];
+    if (a.note)        parts.push(`<div class="note-block"><div class="note-label">Private note</div><div class="note-text">${escapeHtml(a.note)}</div></div>`);
+    if (a.description) parts.push(`<div class="note-block"><div class="note-label">Description</div><div class="note-text">${escapeHtml(a.description)}</div></div>`);
+    if (!parts.length) return;
+    const card = document.getElementById('notes-card');
+    card.innerHTML = parts.join('');
+    card.style.display = 'block';
+  }
 
   function swimPace(kph) {
     if (kph == null || kph <= 0) return null;
@@ -811,6 +851,7 @@
       document.getElementById('header-meta').innerHTML = meta.join('');
 
       renderStats(a);
+      renderNotes(a);
       renderMap(a.coords || []);
       renderChart(a.trackpoints || {});
       renderDetailStats(a.stats || {});
