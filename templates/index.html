@@ -236,7 +236,7 @@
   <div class="card">
     <div class="filter-bar">
       <div class="filter-field">
-        <input type="search" class="filter-input" id="filter-text" placeholder="Search by name…">
+        <input type="search" class="filter-input" id="filter-text" placeholder="Search name or description…">
       </div>
       <div class="filter-field">
         <label for="filter-type">Type</label>
@@ -400,7 +400,7 @@
   function filtered(arr) {
     const q = searchText.trim().toLowerCase();
     return arr.filter(a => {
-      if (q && !(a.name || '').toLowerCase().includes(q)) return false;
+      if (q && !(a.name || '').toLowerCase().includes(q) && !(a.description || '').toLowerCase().includes(q)) return false;
       if (typeFilter && a.type !== typeFilter) return false;
       if (dateFrom || dateTo) {
         const ymd = localYMD(a.date_sort);

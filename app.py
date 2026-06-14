@@ -153,6 +153,19 @@ def set_activity_meta(date_sort, name=None, note=None, description=None, source=
         )
 
 
+def set_description(date_sort, description):
+    """Set (or clear) the user-authored description for an activity. Empty -> NULL.
+    Only the description column is touched; other metadata is preserved."""
+    key  = _activity_key(date_sort)
+    desc = (description or '').strip() or None
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO activity_meta (activity_key, description, source) VALUES (?,?,?) '
+            'ON CONFLICT(activity_key) DO UPDATE SET description=excluded.description',
+            (key, desc, 'user')
+        )
+
+
 def load_external_activities():
     """Return summary dicts for all file-less activities."""
     with get_db() as db:
@@ -1276,6 +1289,20 @@ def api_activity(filename):
             abort(404)
     apply_meta(data, load_meta_map())
     return jsonify(data)
+
+
+@app.route('/api/activity/<path:filename>/description', methods=['POST'])
+def api_set_description(filename):
+    path = os.path.join(ACTIVITIES_DIR, filename)
+    if os.path.isfile(path):
+        data = _get_or_parse(path)
+    else:
+        data = get_external_activity(filename)
+    if not data:
+        abort(404)
+    body = request.get_json(silent=True) or {}
+    set_description(data['date_sort'], body.get('description', ''))
+    return jsonify({'ok': True})
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

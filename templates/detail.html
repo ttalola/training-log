@@ -217,6 +217,28 @@
     margin-top: 3px;
   }
 
+  /* Editable description */
+  .desc-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+  }
+  .desc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .desc-title { font-size: 12px; font-weight: 500; color: #888; }
+  .desc-edit-btn, .desc-save, .desc-cancel {
+    border: 1px solid #ddd; border-radius: 3px; background: #fff;
+    padding: 4px 10px; font-size: 12px; color: #555; cursor: pointer;
+  }
+  .desc-save { background: #2aab8e; border-color: #2aab8e; color: #fff; }
+  .desc-edit-btn:hover, .desc-cancel:hover { background: #f5f5f5; }
+  .desc-view { font-size: 14px; color: #333; line-height: 1.5; white-space: pre-wrap; }
+  .desc-view.empty { color: #aaa; font-style: italic; }
+  #desc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 8px;
+                border: 1px solid #ddd; border-radius: 3px; resize: vertical; }
+  .desc-actions { margin-top: 8px; display: flex; gap: 8px; }
+
   /* Notes (imported from Strava) */
   .notes-card {
     background: #fff;
@@ -336,6 +358,21 @@
 <main>
   <div id="loading" class="loading-overlay">Loading activity…</div>
 
+  <div class="desc-card" id="desc-card" style="display:none">
+    <div class="desc-head">
+      <span class="desc-title">Description</span>
+      <button class="desc-edit-btn" id="desc-edit">Edit</button>
+    </div>
+    <div class="desc-view" id="desc-view"></div>
+    <div id="desc-editor" style="display:none">
+      <textarea id="desc-input" rows="3" placeholder="Write a description…"></textarea>
+      <div class="desc-actions">
+        <button class="desc-save" id="desc-save">Save</button>
+        <button class="desc-cancel" id="desc-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div class="detail-layout" id="detail-layout" style="display:none">
 
     <div class="map-card">
@@ -385,10 +422,46 @@
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  function renderDescription(a) {
+    const card   = document.getElementById('desc-card');
+    const view   = document.getElementById('desc-view');
+    const editor = document.getElementById('desc-editor');
+    const input  = document.getElementById('desc-input');
+    let current  = a.description || '';
+    function show() {
+      if (current) { view.textContent = current; view.classList.remove('empty'); }
+      else { view.textContent = 'No description yet — click Edit to add one.'; view.classList.add('empty'); }
+      view.style.display = '';
+      editor.style.display = 'none';
+    }
+    show();
+    card.style.display = 'block';
+    document.getElementById('desc-edit').onclick = () => {
+      input.value = current;
+      view.style.display = 'none';
+      editor.style.display = 'block';
+      input.focus();
+    };
+    document.getElementById('desc-cancel').onclick = () => show();
+    document.getElementById('desc-save').onclick = () => {
+      const val = input.value;
+      const btn = document.getElementById('desc-save');
+      btn.disabled = true;
+      fetch(`/api/activity/${encodeURIComponent(filename)}/description`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: val }),
+      })
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(() => { current = val.trim(); a.description = current; show(); })
+        .catch(e => alert('Failed to save description: ' + e.message))
+        .finally(() => { btn.disabled = false; });
+    };
+  }
+
   function renderNotes(a) {
     const parts = [];
     if (a.note)        parts.push(`<div class="note-block"><div class="note-label">Private note</div><div class="note-text">${escapeHtml(a.note)}</div></div>`);
-    if (a.description) parts.push(`<div class="note-block"><div class="note-label">Description</div><div class="note-text">${escapeHtml(a.description)}</div></div>`);
     if (!parts.length) return;
     const card = document.getElementById('notes-card');
     card.innerHTML = parts.join('');
@@ -851,6 +924,7 @@
       document.getElementById('header-meta').innerHTML = meta.join('');
 
       renderStats(a);
+      renderDescription(a);
       renderNotes(a);
       renderMap(a.coords || []);
       renderChart(a.trackpoints || {});
