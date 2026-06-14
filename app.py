@@ -88,6 +88,10 @@ def init_db():
                 source       TEXT
             )
         ''')
+        try:
+            db.execute('ALTER TABLE activity_meta ADD COLUMN analysis TEXT')
+        except Exception:
+            pass
 
         # File-less activities (e.g. Strava manual entries / unsupported formats)
         # that have no .fit/.tcx on disk — stored as a ready-made summary.
@@ -167,6 +171,25 @@ def set_description(date_sort, description):
             'ON CONFLICT(activity_key) DO UPDATE SET description=excluded.description',
             (key, desc, 'user')
         )
+
+
+def set_analysis(date_sort, analysis):
+    """Save (or clear) the AI analysis for an activity."""
+    key = _activity_key(date_sort)
+    val = (analysis or '').strip() or None
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO activity_meta (activity_key, analysis, source) VALUES (?,?,?) '
+            'ON CONFLICT(activity_key) DO UPDATE SET analysis=excluded.analysis',
+            (key, val, 'user')
+        )
+
+
+def get_analysis(date_sort):
+    with get_db() as db:
+        row = db.execute('SELECT analysis FROM activity_meta WHERE activity_key=?',
+                         (_activity_key(date_sort),)).fetchone()
+    return row['analysis'] if row else None
 
 
 def load_external_activities():
@@ -1291,6 +1314,7 @@ def api_activity(filename):
         if not data:
             abort(404)
     apply_meta(data, load_meta_map())
+    data['analysis'] = get_analysis(data['date_sort'])   # cached AI analysis (may be None)
     return jsonify(data)
 
 
@@ -1327,6 +1351,26 @@ def api_generate_description(filename):
     except Exception as e:
         return jsonify({'error': f'{type(e).__name__}: {e}'}), 502
     return jsonify({'description': text})
+
+
+@app.route('/api/activity/<path:filename>/analyze', methods=['POST'])
+def api_analyze(filename):
+    """Generate a long-form AI analysis (slow, ~1 min) and cache it."""
+    path = os.path.join(ACTIVITIES_DIR, filename)
+    if os.path.isfile(path):
+        data = _get_or_parse(path)
+        coords, fit_path = (data.get('coords') if data else []), path
+    else:
+        data = get_external_activity(filename)
+        coords, fit_path = [], None
+    if not data:
+        abort(404)
+    try:
+        text = describe.analyze(data, coords=coords, fit_path=fit_path)
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 502
+    set_analysis(data['date_sort'], text)
+    return jsonify({'analysis': text})
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

@@ -177,3 +177,59 @@ def llm_describe(s, model=LMSTUDIO_MODEL, url=LMSTUDIO_URL, timeout=120):
 def generate(summary, coords=None, fit_path=None, mode='rule', **kw):
     s = build_signals(summary, coords, fit_path)
     return render_rule(s) if mode == 'rule' else llm_describe(s, **kw)
+
+
+# ── Long-form analysis (local LLM) ────────────────────────────────────────────
+
+_ANALYSIS_SYS = (
+    "You are an experienced endurance coach. Given one workout's data (the athlete's max HR is "
+    f"about {ATHLETE_MAX_HR} bpm), write a detailed but readable analysis: what kind of session it was, "
+    "how the effort / pacing / power or HR distribution looks, anything notable in the splits, laps or "
+    "legs, any data caveats, and 2-3 concrete takeaways. Use the actual numbers and be specific, not "
+    "generic. Use short Markdown sections. Do not invent data you were not given."
+)
+
+
+def build_analysis_payload(detail, coords=None, fit_path=None):
+    keep = ('name', 'type', 'date', 'total_time', 'moving_time', 'distance_km', 'avg_speed_kph',
+            'max_speed_kph', 'avg_hr', 'max_hr', 'avg_cadence', 'avg_watts', 'normalized_power',
+            'calories', 'ascent_m', 'tss', 'ftp')
+    p = {k: detail.get(k) for k in keep if detail.get(k) is not None}
+    start = (coords[0] if coords else None) or ((detail.get('coords') or [None])[0])
+    if start:
+        p['place'] = city_for(start[0], start[1])
+    t = fit_avg_temp(fit_path)
+    if t is not None:
+        p['avg_temp_C'] = t
+    if detail.get('legs'):
+        p['legs'] = [{k: l.get(k) for k in ('type', 'distance_km', 'time', 'pace', 'avg_hr')}
+                     for l in detail['legs']]
+    if detail.get('splits'):
+        p['best_efforts'] = detail['splits']
+    if detail.get('stats'):
+        p['detailed_stats'] = detail['stats']
+    laps = detail.get('laps') or []
+    if 1 < len(laps) <= 30:
+        p['laps'] = [{k: l.get(k) for k in ('lap_id', 'distance_km', 'moving_time',
+                     'avg_speed_kph', 'avg_watts', 'avg_hr', 'max_hr')} for l in laps]
+    return p
+
+
+def analyze(detail, coords=None, fit_path=None, model=LMSTUDIO_MODEL, url=LMSTUDIO_URL, timeout=300):
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _ANALYSIS_SYS},
+            {"role": "user", "content": "Workout data:\n" + json.dumps(
+                build_analysis_payload(detail, coords, fit_path), ensure_ascii=False, indent=1)},
+        ],
+        "temperature": 0.5,
+        "max_tokens": 1200,
+    }).encode()
+    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        out = json.load(r)
+    text = (out['choices'][0]['message']['content'] or '').strip()
+    if not text:
+        raise RuntimeError('empty LLM response')
+    return text

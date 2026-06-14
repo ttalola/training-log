@@ -310,6 +310,24 @@
 
   #tab-stats { padding: 8px 24px 24px; }
 
+  /* Analysis tab */
+  #tab-analysis { padding: 20px 24px 24px; }
+  .analyze-prompt { color: #888; font-size: 14px; }
+  .analyze-btn {
+    margin-top: 10px; padding: 8px 16px; font-size: 14px; cursor: pointer;
+    background: #2aab8e; color: #fff; border: none; border-radius: 4px;
+  }
+  .analyze-btn:hover:not(:disabled) { background: #249478; }
+  .analyze-btn:disabled { background: #b0b0b0; cursor: default; }
+  .analysis-content { font-size: 14px; color: #333; line-height: 1.6; max-width: 760px; }
+  .analysis-content h3, .analysis-content h4 { margin: 18px 0 6px; font-size: 14px; color: #222; }
+  .analysis-content p { margin: 8px 0; }
+  .analysis-content ul, .analysis-content ol { margin: 8px 0; padding-left: 22px; }
+  .analysis-content li { margin: 3px 0; }
+  .analysis-content hr { border: none; border-top: 1px solid #eee; margin: 14px 0; }
+  .analysis-regen { margin-top: 16px; font-size: 12px; }
+  .analysis-regen a { color: #2aab8e; cursor: pointer; }
+
   /* Intervals table */
   .intervals-wrap { overflow-x: auto; }
 
@@ -401,11 +419,13 @@
   <div class="tabs-card" id="tabs-card" style="display:none">
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="tab-stats">Stats</button>
+      <button class="tab-btn" data-tab="tab-analysis">Analysis</button>
       <button class="tab-btn" data-tab="tab-legs" id="legs-tab-btn" style="display:none">Legs</button>
       <button class="tab-btn" data-tab="tab-intervals">Intervals</button>
       <button class="tab-btn" data-tab="tab-splits">Best Splits</button>
     </div>
     <div class="tab-pane active" id="tab-stats"></div>
+    <div class="tab-pane" id="tab-analysis"></div>
     <div class="tab-pane" id="tab-legs"></div>
     <div class="tab-pane" id="tab-intervals"></div>
     <div class="tab-pane" id="tab-splits"></div>
@@ -422,6 +442,50 @@
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Minimal Markdown → HTML for the AI analysis (headings, bold, lists, hr).
+  function mdToHtml(md) {
+    const esc = s => escapeHtml(s)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+    let html = '', list = null;
+    const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
+    for (const raw of String(md).split('\n')) {
+      const line = raw.trim(); let m;
+      if (!line) { closeList(); continue; }
+      if (/^#{1,6}\s/.test(line)) { closeList(); html += `<h4>${esc(line.replace(/^#{1,6}\s/, ''))}</h4>`; }
+      else if (/^(-{3,}|\*{3,})$/.test(line)) { closeList(); html += '<hr>'; }
+      else if ((m = line.match(/^[-*]\s+(.*)/))) { if (list !== 'ul') { closeList(); html += '<ul>'; list = 'ul'; } html += `<li>${esc(m[1])}</li>`; }
+      else if ((m = line.match(/^\d+\.\s+(.*)/))) { if (list !== 'ol') { closeList(); html += '<ol>'; list = 'ol'; } html += `<li>${esc(m[1])}</li>`; }
+      else { closeList(); html += `<p>${esc(line)}</p>`; }
+    }
+    closeList();
+    return html;
+  }
+
+  function renderAnalysis(a) {
+    const pane = document.getElementById('tab-analysis');
+    const showText = txt => {
+      pane.innerHTML = `<div class="analysis-content">${mdToHtml(txt)}</div>`
+        + `<div class="analysis-regen"><a id="analysis-regen">↻ Re-analyze</a></div>`;
+      document.getElementById('analysis-regen').onclick = () => run();
+    };
+    const showPrompt = () => {
+      pane.innerHTML = '<div class="analyze-prompt">No AI analysis yet — runs a local model, takes ~1 minute.</div>'
+        + '<button class="analyze-btn" id="analyze-btn">Analyze with AI</button>';
+      document.getElementById('analyze-btn').onclick = () => run();
+    };
+    const run = () => {
+      pane.innerHTML = '<div class="analyze-prompt">Analyzing… (~1 minute, running locally)</div>';
+      fetch(`/api/activity/${encodeURIComponent(filename)}/analyze`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(r => r.json())
+        .then(d => { if (d.error) throw new Error(d.error); a.analysis = d.analysis; showText(d.analysis); })
+        .catch(e => { pane.innerHTML = `<div class="analyze-prompt">Analysis failed: ${escapeHtml(e.message)}</div>`;
+                      setTimeout(showPrompt, 1800); });
+    };
+    if (a.analysis) showText(a.analysis); else showPrompt();
   }
 
   function renderDescription(a) {
@@ -947,6 +1011,7 @@
       renderLegs(a.legs || []);
       renderIntervals(a.laps || [], a.type);
       renderSplits(a.splits || [], a.type);
+      renderAnalysis(a);
       document.getElementById('tabs-card').style.display = 'block';
     })
     .catch(err => {
