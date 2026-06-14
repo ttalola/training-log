@@ -369,6 +369,8 @@
       <div class="desc-actions">
         <button class="desc-save" id="desc-save">Save</button>
         <button class="desc-cancel" id="desc-cancel">Cancel</button>
+        <button class="desc-cancel" id="desc-gen-rule" title="Auto-generate from the data">Suggest (rules)</button>
+        <button class="desc-cancel" id="desc-gen-ai" title="Auto-generate with the local AI model">Suggest (AI)</button>
       </div>
     </div>
   </div>
@@ -443,6 +445,19 @@
       input.focus();
     };
     document.getElementById('desc-cancel').onclick = () => show();
+    function suggest(mode, btn) {
+      const old = btn.textContent; btn.disabled = true; btn.textContent = '…';
+      fetch(`/api/activity/${encodeURIComponent(filename)}/generate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      })
+        .then(r => r.json())
+        .then(d => { if (d.error) throw new Error(d.error); input.value = d.description; input.focus(); })
+        .catch(e => alert('Generate failed: ' + e.message))
+        .finally(() => { btn.disabled = false; btn.textContent = old; });
+    }
+    document.getElementById('desc-gen-rule').onclick = () => suggest('rule', document.getElementById('desc-gen-rule'));
+    document.getElementById('desc-gen-ai').onclick   = () => suggest('llm',  document.getElementById('desc-gen-ai'));
     document.getElementById('desc-save').onclick = () => {
       const val = input.value;
       const btn = document.getElementById('desc-save');

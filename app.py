@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from flask import Flask, abort, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
+import describe
+
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
@@ -53,6 +55,7 @@ MAX_CHART_POINTS = 3000   # Downsample trackpoints to this many for charting
 def get_db():
     db = sqlite3.connect(DB_PATH)
     db.row_factory = sqlite3.Row
+    db.execute('PRAGMA busy_timeout=5000')   # wait out brief locks (e.g. batch writer)
     return db
 
 
@@ -1303,6 +1306,27 @@ def api_set_description(filename):
     body = request.get_json(silent=True) or {}
     set_description(data['date_sort'], body.get('description', ''))
     return jsonify({'ok': True})
+
+
+@app.route('/api/activity/<path:filename>/generate', methods=['POST'])
+def api_generate_description(filename):
+    """Generate a suggested description (not saved). mode: 'rule' or 'llm'."""
+    path = os.path.join(ACTIVITIES_DIR, filename)
+    if os.path.isfile(path):
+        data = _get_or_parse(path)
+        coords = data.get('coords') if data else []
+        fit_path = path
+    else:
+        data = get_external_activity(filename)
+        coords, fit_path = [], None
+    if not data:
+        abort(404)
+    mode = (request.get_json(silent=True) or {}).get('mode', 'rule')
+    try:
+        text = describe.generate(data, coords=coords, fit_path=fit_path, mode=mode)
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 502
+    return jsonify({'description': text})
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────
