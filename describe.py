@@ -26,6 +26,21 @@ def verb(t):
     return _VERB.get(t, (t or 'activity').lower())
 
 
+# Skip only activities with essentially nothing to describe (GPS-glitch blips,
+# empty recordings). Short-but-real efforts — e.g. separately-recorded interval
+# reps — are kept: they still carry distance and/or heart rate.
+MIN_DURATION_S = 30
+
+
+def is_degenerate(summary):
+    """True only for near-empty activities: under 30 s, or no distance AND no HR/calories."""
+    if (summary.get('total_time_s') or 0) < MIN_DURATION_S:
+        return True
+    has_distance = bool(summary.get('distance_km'))                       # > 0 km
+    has_signal   = bool(summary.get('avg_hr') or summary.get('calories'))
+    return not (has_distance or has_signal)
+
+
 def effort_word(avg_hr, max_hr=ATHLETE_MAX_HR):
     """Effort label from %HRmax zones."""
     if not avg_hr or not max_hr:

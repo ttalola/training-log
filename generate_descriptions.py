@@ -65,7 +65,7 @@ def main():
     worklist = load_worklist()
     print(f'activities to consider: {len(worklist)}', flush=True)
 
-    done = skipped = errors = 0
+    done = skipped = errors = degenerate = 0
     t0 = time.time()
     for fname, summary in worklist:
         ds  = summary.get('date_sort')
@@ -74,6 +74,9 @@ def main():
             continue
         if not force and key in have_desc:
             skipped += 1
+            continue
+        if describe.is_degenerate(summary):
+            degenerate += 1
             continue
         if limit is not None and done >= limit:
             break
@@ -97,7 +100,8 @@ def main():
             print(f'  ! {fname}: {e}', flush=True)
 
     dt = time.time() - t0
-    print(f'\nDone in {dt/60:.1f} min — generated={done} skipped={skipped} errors={errors}', flush=True)
+    print(f'\nDone in {dt/60:.1f} min — generated={done} skipped={skipped} '
+          f'degenerate={degenerate} errors={errors}', flush=True)
 
 
 if __name__ == '__main__':
