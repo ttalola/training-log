@@ -20,11 +20,12 @@ A locally-run web app for viewing Garmin activity files. Import TCX and FIT file
 - [fitparse](https://github.com/dtcooper/python-fitparse) for FIT file support
 - [garminconnect](https://github.com/cyberjunky/python-garminconnect) for Garmin Connect sync
 - [python-dotenv](https://github.com/theskumar/python-dotenv) for loading credentials from `.env`
+- [reverse_geocode](https://github.com/richardpenman/reverse_geocode) for offline city lookup in auto-generated descriptions
 
 Install dependencies:
 
 ```bash
-pip install flask fitparse garminconnect python-dotenv
+pip install flask fitparse garminconnect python-dotenv reverse_geocode
 ```
 
 ## Getting started
@@ -32,7 +33,7 @@ pip install flask fitparse garminconnect python-dotenv
 ```bash
 git clone https://github.com/ttalola/training-log.git
 cd training-log
-pip install flask fitparse garminconnect python-dotenv
+pip install flask fitparse garminconnect python-dotenv reverse_geocode
 python app.py
 ```
 
