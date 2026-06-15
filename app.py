@@ -280,6 +280,11 @@ def db_get_detail(filename, mtime):
         return None
     data['coords']      = json.loads(row['coords_json'])      if row['coords_json']      else []
     data['trackpoints'] = json.loads(row['trackpoints_json']) if row['trackpoints_json'] else {}
+    # Lazily re-parse GPS activities cached before chart↔map linking, so the chart
+    # samples gain lat/lon. Only when there's a track and a chart but no coordinates yet.
+    tp = data['trackpoints']
+    if data['coords'] and tp.get('dist_km') and 'lat' not in tp:
+        return None
     return data
 
 
@@ -665,20 +670,25 @@ def downsample(points, max_pts=MAX_CHART_POINTS):
 
 def build_trackpoints(raw_points):
     """
-    raw_points: list of (dist_km, alt_m, spd_kph, pwr_w, cad) — all may be None.
-    Returns column-oriented dict suitable for Plotly.
+    raw_points: list of (dist_km, alt_m, spd_kph, pwr_w, cad, lat, lon) — all may be None.
+    Returns column-oriented dict suitable for Plotly; includes lat/lon (aligned with the
+    downsampled samples) when GPS is present, so the chart can drive a marker on the map.
     """
-    pts = [(d, a, s, p, c) for d, a, s, p, c in raw_points if d is not None]
+    pts = [p for p in raw_points if p[0] is not None]
     if not pts:
         return {}
     pts = downsample(pts)
-    return {
+    tp = {
         'dist_km': [p[0] for p in pts],
         'alt_m':   [p[1] for p in pts],
         'spd_kph': [p[2] for p in pts],
         'pwr_w':   [p[3] for p in pts],
         'cad':     [p[4] for p in pts],
     }
+    if any(len(p) > 6 and p[5] is not None and p[6] is not None for p in pts):
+        tp['lat'] = [p[5] if len(p) > 6 else None for p in pts]
+        tp['lon'] = [p[6] if len(p) > 6 else None for p in pts]
+    return tp
 
 
 # ── TCX parser ────────────────────────────────────────────────────────────────
@@ -782,6 +792,8 @@ def parse_tcx(filepath):
                 round(float(spd_el) * 3.6, 1)   if spd_el else None,
                 int(float(w_el))                 if w_el   else None,
                 cad_int,
+                round(float(lat_el), 6)          if (lat_el and lon_el) else None,
+                round(float(lon_el), 6)          if (lat_el and lon_el) else None,
             ))
 
             if tp_time and dst_el:
@@ -1064,6 +1076,8 @@ def parse_fit(filepath):
             round(float(spd) * 3.6, 1)          if spd       else None,
             int(fields['power'])                 if fields.get('power') else None,
             int(c)                               if (c and int(c) > 0)  else None,
+            round(lat * SEMI, 6)                 if (lat and lon) else None,
+            round(lon * SEMI, 6)                 if (lat and lon) else None,
         ))
 
         splits_dist = float(dist_field) if dist_field else (cum_dist if cum_dist > 0 else None)

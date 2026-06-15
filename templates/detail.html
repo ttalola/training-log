@@ -436,6 +436,7 @@
 <script>
   const filename = {{ filename|tojson }};
   let map = null;
+  let hoverMarker = null;
 
   function dash(v) { return v != null ? v : '—'; }
 
@@ -845,6 +846,30 @@
 
     document.getElementById('chart-card').style.display = 'block';
     Plotly.newPlot('chart', traces, layout, config);
+    linkChartToMap(tp);
+  }
+
+  // Hovering the chart drops a marker on the matching spot on the map.
+  function linkChartToMap(tp) {
+    if (!map || !tp.lat || !tp.lon) return;
+    const chartDiv = document.getElementById('chart');
+    if (!hoverMarker) {
+      hoverMarker = L.circleMarker([0, 0], {
+        radius: 7, color: '#fff', weight: 2, fillColor: '#e8333a', fillOpacity: 1,
+      });
+    }
+    chartDiv.on('plotly_hover', ev => {
+      const pt = ev.points && ev.points[0];
+      if (!pt) return;
+      const i = pt.pointIndex != null ? pt.pointIndex : pt.pointNumber;
+      const la = tp.lat[i], lo = tp.lon[i];
+      if (la == null || lo == null) return;
+      hoverMarker.setLatLng([la, lo]);
+      if (!map.hasLayer(hoverMarker)) hoverMarker.addTo(map);
+    });
+    chartDiv.on('plotly_unhover', () => {
+      if (map.hasLayer(hoverMarker)) map.removeLayer(hoverMarker);
+    });
   }
 
   function renderSplits(splits, activityType) {
