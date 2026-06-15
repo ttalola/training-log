@@ -88,10 +88,11 @@ def init_db():
                 source       TEXT
             )
         ''')
-        try:
-            db.execute('ALTER TABLE activity_meta ADD COLUMN analysis TEXT')
-        except Exception:
-            pass
+        for col in ('analysis', 'type_override'):
+            try:
+                db.execute(f'ALTER TABLE activity_meta ADD COLUMN {col} TEXT')
+            except Exception:
+                pass
 
         # File-less activities (e.g. Strava manual entries / unsupported formats)
         # that have no .fit/.tcx on disk — stored as a ready-made summary.
@@ -127,18 +128,19 @@ def load_meta_map():
     """Return {activity_key: {name, note, description, source}} for all metadata."""
     with get_db() as db:
         rows = db.execute(
-            'SELECT activity_key, name, note, description, source FROM activity_meta'
+            'SELECT activity_key, name, note, description, source, type_override FROM activity_meta'
         ).fetchall()
     return {r['activity_key']: dict(r) for r in rows}
 
 
 def apply_meta(summary, meta_map):
-    """Merge imported metadata (Strava title/note/description) onto a summary in place."""
+    """Merge imported metadata (Strava title/note/description, type fix) onto a summary in place."""
     m = meta_map.get(_activity_key(summary.get('date_sort')))
     if m:
-        if m.get('name'):        summary['name']        = m['name']
-        if m.get('note'):        summary['note']        = m['note']
-        if m.get('description'): summary['description'] = m['description']
+        if m.get('name'):          summary['name']        = m['name']
+        if m.get('note'):          summary['note']        = m['note']
+        if m.get('description'):   summary['description'] = m['description']
+        if m.get('type_override'): summary['type']        = m['type_override']
     summary['has_note'] = bool(m and (m.get('note') or m.get('description')))
     return summary
 
@@ -170,6 +172,18 @@ def set_description(date_sort, description):
             'INSERT INTO activity_meta (activity_key, description, source) VALUES (?,?,?) '
             'ON CONFLICT(activity_key) DO UPDATE SET description=excluded.description',
             (key, desc, 'user')
+        )
+
+
+def set_type_override(date_sort, activity_type):
+    """Override the displayed activity type (e.g. fix a mislabeled Triathlon). Empty clears it."""
+    key = _activity_key(date_sort)
+    val = (activity_type or '').strip() or None
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO activity_meta (activity_key, type_override, source) VALUES (?,?,?) '
+            'ON CONFLICT(activity_key) DO UPDATE SET type_override=excluded.type_override',
+            (key, val, 'user')
         )
 
 
