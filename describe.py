@@ -110,6 +110,7 @@ def build_signals(summary, coords=None, fit_path=None):
         'ascent_m':      summary.get('ascent_m'),
         'temp_c':        fit_avg_temp(fit_path),
         'cadence':       summary.get('avg_cadence'),
+        'race':          True if summary.get('is_race') else None,
         'note':          _plausibility(typ, summary.get('avg_speed_kph')),
     }
 
@@ -139,6 +140,8 @@ def render_rule(s):
         parts.append(f"+{s['temp_c']}°C" if s['temp_c'] >= 0 else f"{s['temp_c']}°C")
 
     out = ', '.join(p for p in parts if p) + '.'
+    if s.get('race'):
+        out = 'Race — ' + out
     if s['note']:
         out += f" (Note: {s['note']}.)"
     return out
@@ -186,7 +189,8 @@ _ANALYSIS_SYS = (
     f"about {ATHLETE_MAX_HR} bpm), write a detailed but readable analysis: what kind of session it was, "
     "how the effort / pacing / power or HR distribution looks, anything notable in the splits, laps or "
     "legs, any data caveats, and 2-3 concrete takeaways. Use the actual numbers and be specific, not "
-    "generic. Use short Markdown sections. Do not invent data you were not given."
+    "generic. Use short Markdown sections. Do not invent data you were not given. "
+    "If race=true, treat it as a race-day maximal effort and frame the analysis accordingly."
 )
 
 
@@ -208,6 +212,8 @@ def build_analysis_payload(detail, coords=None, fit_path=None):
         p['best_efforts'] = detail['splits']
     if detail.get('stats'):
         p['detailed_stats'] = detail['stats']
+    if detail.get('is_race'):
+        p['race'] = True
     laps = detail.get('laps') or []
     if 1 < len(laps) <= 30:
         p['laps'] = [{k: l.get(k) for k in ('lap_id', 'distance_km', 'moving_time',

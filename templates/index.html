@@ -374,7 +374,7 @@
     const cadUnit = a.type.includes('Swim') ? 'spm' : 'rpm';
     return `<tr>
       <td>${a.date}</td>
-      <td><a class="name-link" href="/activity/${encodeURIComponent(a.filename)}">${a.name}</a>${a.has_note ? ' <span class="note-badge" title="Has notes">📝</span>' : ''}</td>
+      <td><a class="name-link" href="/activity/${encodeURIComponent(a.filename)}">${a.name}</a>${a.is_race ? ' <span class="note-badge" title="Race">🏁</span>' : ''}${a.has_note ? ' <span class="note-badge" title="Has notes">📝</span>' : ''}</td>
       <td><span class="type-badge">${a.type}</span></td>
       <td>${dash(a.total_time)}</td>
       <td>${a.distance_km != null ? a.distance_km + ' km' : dash(null)}</td>

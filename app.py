@@ -93,6 +93,10 @@ def init_db():
                 db.execute(f'ALTER TABLE activity_meta ADD COLUMN {col} TEXT')
             except Exception:
                 pass
+        try:
+            db.execute('ALTER TABLE activity_meta ADD COLUMN is_race INTEGER')
+        except Exception:
+            pass
 
         # File-less activities (e.g. Strava manual entries / unsupported formats)
         # that have no .fit/.tcx on disk — stored as a ready-made summary.
@@ -128,13 +132,13 @@ def load_meta_map():
     """Return {activity_key: {name, note, description, source}} for all metadata."""
     with get_db() as db:
         rows = db.execute(
-            'SELECT activity_key, name, note, description, source, type_override FROM activity_meta'
+            'SELECT activity_key, name, note, description, source, type_override, is_race FROM activity_meta'
         ).fetchall()
     return {r['activity_key']: dict(r) for r in rows}
 
 
 def apply_meta(summary, meta_map):
-    """Merge imported metadata (Strava title/note/description, type fix) onto a summary in place."""
+    """Merge imported metadata (Strava title/note/description, type fix, race flag) in place."""
     m = meta_map.get(_activity_key(summary.get('date_sort')))
     if m:
         if m.get('name'):          summary['name']        = m['name']
@@ -142,6 +146,7 @@ def apply_meta(summary, meta_map):
         if m.get('description'):   summary['description'] = m['description']
         if m.get('type_override'): summary['type']        = m['type_override']
     summary['has_note'] = bool(m and (m.get('note') or m.get('description')))
+    summary['is_race']  = bool(m and m.get('is_race'))
     return summary
 
 
@@ -184,6 +189,17 @@ def set_type_override(date_sort, activity_type):
             'INSERT INTO activity_meta (activity_key, type_override, source) VALUES (?,?,?) '
             'ON CONFLICT(activity_key) DO UPDATE SET type_override=excluded.type_override',
             (key, val, 'user')
+        )
+
+
+def set_race(date_sort, is_race=True):
+    """Mark (or unmark) an activity as a race."""
+    key = _activity_key(date_sort)
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO activity_meta (activity_key, is_race, source) VALUES (?,?,?) '
+            'ON CONFLICT(activity_key) DO UPDATE SET is_race=excluded.is_race',
+            (key, 1 if is_race else None, 'user')
         )
 
 

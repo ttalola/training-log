@@ -998,6 +998,7 @@
       document.getElementById('title').textContent = `${a.type} – ${a.name}`;
 
       const meta = [];
+      if (a.is_race)      meta.push(`<span>🏁 Race</span>`);
       if (a.datetime_str) meta.push(`<span>📅 ${a.datetime_str}</span>`);
       if (a.ftp)          meta.push(`<span>⚡ FTP ${a.ftp} w</span>`);
       document.getElementById('header-meta').innerHTML = meta.join('');
