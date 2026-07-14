@@ -1093,7 +1093,11 @@ def parse_fit(filepath):
 
     if sport_label == 'Ride' and not coords:
         sport_label = 'Indoor Ride'
-    mov_s = moving_s if moving_s > 0 else total_time
+    # Prefer the device's own timer (active) time — the record-gap heuristic below
+    # undercounts moving time badly on "smart recording" files (variable sample rate,
+    # where normal riding can have >5s gaps that the heuristic discards).
+    timer_s = session.get('total_timer_time')
+    mov_s   = timer_s or (moving_s if moving_s > 0 else total_time)
     tss, tss_per_hour = calc_tss(total_time, nz(np_val), ATHLETE_FTP)
     avg_cad_val = nz(session.get('avg_cadence'))
     avg_w_val   = nz(session.get('avg_power'))
