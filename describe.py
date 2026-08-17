@@ -109,7 +109,7 @@ def build_signals(summary, coords=None, fit_path=None):
         'effort':        effort_word(summary.get('avg_hr')),
         'ascent_m':      summary.get('ascent_m'),
         'temp_c':        fit_avg_temp(fit_path),
-        'cadence':       summary.get('avg_cadence'),
+        'cadence':       summary.get('avg_active_cadence') or summary.get('avg_cadence'),
         'race':          True if summary.get('is_race') else None,
         'note':          _plausibility(typ, summary.get('avg_speed_kph')),
     }
@@ -213,9 +213,15 @@ _ANALYSIS_SYS = (
 
 def build_analysis_payload(detail, coords=None, fit_path=None):
     keep = ('name', 'type', 'date', 'total_time', 'moving_time', 'distance_km', 'avg_speed_kph',
-            'max_speed_kph', 'avg_hr', 'max_hr', 'avg_cadence', 'avg_watts', 'normalized_power',
+            'max_speed_kph', 'avg_hr', 'max_hr', 'avg_watts', 'normalized_power',
             'calories', 'ascent_m', 'tss', 'ftp')
     p = {k: detail.get(k) for k in keep if detail.get(k) is not None}
+    # Name the two cadence bases explicitly — an unlabeled "avg_cadence" that
+    # includes coasting reads as a suspiciously low pedaling cadence.
+    if detail.get('avg_cadence') is not None:
+        p['avg_cadence_incl_coasting'] = detail['avg_cadence']
+    if detail.get('avg_active_cadence') is not None:
+        p['avg_cadence_while_pedaling'] = detail['avg_active_cadence']
     start = (coords[0] if coords else None) or ((detail.get('coords') or [None])[0])
     if start:
         p['place'] = city_for(start[0], start[1])

@@ -278,8 +278,9 @@ def db_get_detail(filename, mtime):
         return None
     if _cache_is_stale(data):
         return None
-    # Re-parse power activities cached before avg/NP were recomputed from records.
-    if (data.get('avg_watts') or data.get('normalized_power')) and data.get('power_calc_v', 0) < 2:
+    # Re-parse activities cached before power/cadence were recomputed from records.
+    if ((data.get('avg_watts') or data.get('normalized_power') or data.get('avg_cadence'))
+            and data.get('power_calc_v', 0) < 3):
         return None
     data['coords']      = json.loads(row['coords_json'])      if row['coords_json']      else []
     data['trackpoints'] = json.loads(row['trackpoints_json']) if row['trackpoints_json'] else {}
@@ -439,7 +440,8 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
     """
     speeds = sorted([r[2] for r in chart_raw if r[2] is not None and r[2] > 0.5])
     powers = sorted([r[3] for r in chart_raw if r[3] is not None])
-    cads   = sorted([r[4] for r in chart_raw if r[4] is not None and r[4] > 0])
+    cads   = sorted([r[4] for r in chart_raw if r[4] is not None])          # incl coasting zeros
+    cads_act = [c for c in cads if c > 0]                                   # pedaling only
     hrs    = sorted([h for h in hr_vals if h and h > 0])
 
     elapsed_s = summary.get('total_time_s') or 0
@@ -555,8 +557,8 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
     # ── Cadence ───────────────────────────────────────────────────────────────
     if cads and 'Swim' not in sport and 'Run' not in sport:
         cad_unit = 'spm' if ('Swim' in sport or sport in ('Run', 'Walk')) else 'rpm'
-        n_total  = sum(1 for r in chart_raw if r[4] is not None)
-        ped_ratio = round(len(cads) / n_total, 2) if n_total else None
+        n_total  = len(cads)
+        ped_ratio = round(len(cads_act) / n_total, 2) if n_total else None
         ped_s     = moving_s * ped_ratio if ped_ratio else None
         result['cadence'] = [
             (summary.get('avg_active_cadence'), cad_unit, 'Active Average'),
@@ -720,6 +722,7 @@ def parse_tcx(filepath):
     coords          = []
     moving_s        = 0
     active_cadences = []
+    tcx_cadence_all = []   # every cadence sample incl coasting zeros
     chart_raw       = []   # (dist_km, alt_m, spd_kph, pwr_w, cad)
     hr_vals_all     = []   # per-trackpoint HR for stats
 
@@ -786,9 +789,11 @@ def parse_tcx(filepath):
             if tp_time:
                 prev_time = tp_time
 
-            cad_int = int(cad_el) if cad_el else None
-            if cad_int and cad_int > 0:
-                active_cadences.append(cad_int)
+            cad_int = int(cad_el) if cad_el is not None else None
+            if cad_int is not None:
+                tcx_cadence_all.append(cad_int)     # incl coasting zeros
+                if cad_int > 0:
+                    active_cadences.append(cad_int)
 
             if hr_el:
                 hr_vals_all.append(int(float(hr_el)))
@@ -844,6 +849,7 @@ def parse_tcx(filepath):
     np_val    = calc_normalized_power(tp_watts_for_np)
     # Average power from trackpoints, including coasting zeros (matches the FIT path)
     tcx_avg_w = round(sum(w for _, w in tp_watts_for_np) / len(tp_watts_for_np)) if tp_watts_for_np else None
+    tcx_avg_cad = round(sum(tcx_cadence_all) / len(tcx_cadence_all)) if tcx_cadence_all else None
     mov_s     = moving_s if moving_s > 0 else total_time
     tss, tss_per_hour = calc_tss(total_time, np_val, ATHLETE_FTP)
 
@@ -861,9 +867,9 @@ def parse_tcx(filepath):
         'max_speed_kph':      round(max_speed_ms * 3.6, 1) if max_speed_ms else None,
         'avg_hr':             round(hr_w / hr_t) if hr_t else None,
         'max_hr':             max_hr or None,
-        'avg_cadence':        round(cad_w / cad_t) if cad_t else None,
+        'avg_cadence':        tcx_avg_cad if tcx_avg_cad is not None else (round(cad_w / cad_t) if cad_t else None),
         'avg_watts':          tcx_avg_w if tcx_avg_w is not None else (round(watts_w / watts_t) if watts_t else None),
-        'power_calc_v':       2,
+        'power_calc_v':       3,
         'normalized_power':   np_val,
         'calories':           total_cal or None,
         'moving_time':        fmt_time(mov_s),
@@ -887,7 +893,7 @@ def parse_tcx(filepath):
             'max_speed_kph': round(max_speed_ms * 3.6, 1) if max_speed_ms else None,
             'avg_hr': round(hr_w / hr_t) if hr_t else None,
             'max_hr': max_hr or None,
-            'avg_cadence': round(cad_w / cad_t) if cad_t else None,
+            'avg_cadence': tcx_avg_cad if tcx_avg_cad is not None else (round(cad_w / cad_t) if cad_t else None),
             'avg_active_cadence': round(sum(active_cadences) / len(active_cadences)) if active_cadences else None,
             'avg_watts': tcx_avg_w if tcx_avg_w is not None else (round(watts_w / watts_t) if watts_t else None),
             'normalized_power': np_val,
@@ -1025,6 +1031,7 @@ def parse_fit(filepath):
     chart_raw       = []
     hr_vals_all     = []
     power_samples   = []   # (timestamp, watts) incl zeros — for recomputed avg & NP
+    cadence_all     = []   # every cadence sample incl coasting zeros
     prev_ts         = None
     cum_dist        = 0.0
 
@@ -1080,8 +1087,10 @@ def parse_fit(filepath):
         prev_ts = ts
 
         c = fields.get('cadence')
-        if c and int(c) > 0:
-            active_cadences.append(int(c))
+        if c is not None:
+            cadence_all.append(int(c))          # incl coasting zeros
+            if int(c) > 0:
+                active_cadences.append(int(c))
 
         hr = fields.get('heart_rate')
         if hr and int(hr) > 0:
@@ -1093,7 +1102,7 @@ def parse_fit(filepath):
             round(float(alt), 1)                if alt       else None,
             round(float(spd) * 3.6, 1)          if spd       else None,
             int(fields['power'])                 if fields.get('power') is not None else None,
-            int(c)                               if (c and int(c) > 0)  else None,
+            int(c)                               if c is not None else None,
             round(lat * SEMI, 6)                 if (lat and lon) else None,
             round(lon * SEMI, 6)                 if (lat and lon) else None,
             round((ts - start_time).total_seconds()) if ts else None,
@@ -1106,7 +1115,7 @@ def parse_fit(filepath):
                 splits_dist,
                 round(float(spd) * 3.6, 1) if spd else None,
                 int(fields['power'])        if fields.get('power') is not None else None,
-                int(c)                      if (c and int(c) > 0)  else None,
+                int(c)                      if c is not None else None,
                 int(hr)                     if (hr and int(hr) > 0) else None,
             ))
 
@@ -1134,7 +1143,10 @@ def parse_fit(filepath):
     else:
         avg_w_val = None
     tss, tss_per_hour = calc_tss(total_time, nz(np_val), ATHLETE_FTP)
-    avg_cad_val = nz(session.get('avg_cadence'))
+    # Cadence on the same basis as power: 'average' includes coasting zeros,
+    # 'active average' is pedaling-only. Fall back to the device value if no samples.
+    avg_cad_val = (round(sum(cadence_all) / len(cadence_all))
+                   if cadence_all else nz(session.get('avg_cadence')))
     avg_hr_val  = nz(session.get('avg_heart_rate'))
     max_hr_val  = nz(session.get('max_heart_rate'))
     avg_active  = round(sum(active_cadences) / len(active_cadences)) if active_cadences else avg_cad_val
@@ -1156,7 +1168,7 @@ def parse_fit(filepath):
         'avg_cadence':        avg_cad_val,
         'avg_watts':          avg_w_val,
         'normalized_power':   nz(np_val),
-        'power_calc_v':       2,
+        'power_calc_v':       3,
         'calories':           nz(session.get('total_calories')),
         'moving_time':        fmt_time(mov_s) if mov_s else None,
         'moving_time_s':      mov_s,
