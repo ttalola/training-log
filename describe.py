@@ -157,24 +157,41 @@ _SYS = (
 )
 
 
-def llm_describe(s, model=LMSTUDIO_MODEL, url=LMSTUDIO_URL, timeout=120):
+def _chat(messages, model, url, timeout, max_tokens, temperature=0.4):
+    """Call the local OpenAI-compatible API and return the assistant text.
+
+    Some models "think" first and put that in reasoning_content, leaving content
+    empty when the budget runs out (finish_reason='length'). Retry once with a
+    much larger budget so the answer itself still fits.
+    """
+    for budget in (max_tokens, max_tokens * 4):
+        payload = json.dumps({
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": budget,
+        }).encode()
+        req = urllib.request.Request(url, data=payload,
+                                     headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.load(r)
+        choice = out['choices'][0]
+        text = (choice['message'].get('content') or '').strip()
+        if text:
+            return text
+        # No answer yet: only worth retrying if it was cut off mid-thought.
+        if choice.get('finish_reason') != 'length':
+            break
+    raise RuntimeError('empty LLM response')
+
+
+def llm_describe(s, model=LMSTUDIO_MODEL, url=LMSTUDIO_URL, timeout=300):
     fields = {k: v for k, v in s.items() if v not in (None, '') and k != 'verb'}
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _SYS},
-            {"role": "user", "content": json.dumps(fields, ensure_ascii=False)},
-        ],
-        "temperature": 0.4,
-        "max_tokens": 90,
-    }).encode()
-    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        out = json.load(r)
-    text = (out['choices'][0]['message']['content'] or '').strip()
-    if not text:
-        raise RuntimeError('empty LLM response')
-    return text
+    return _chat(
+        [{"role": "system", "content": _SYS},
+         {"role": "user", "content": json.dumps(fields, ensure_ascii=False)}],
+        model, url, timeout, max_tokens=800,
+    )
 
 
 def generate(summary, coords=None, fit_path=None, mode='rule', **kw):
@@ -221,21 +238,10 @@ def build_analysis_payload(detail, coords=None, fit_path=None):
     return p
 
 
-def analyze(detail, coords=None, fit_path=None, model=LMSTUDIO_MODEL, url=LMSTUDIO_URL, timeout=300):
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _ANALYSIS_SYS},
-            {"role": "user", "content": "Workout data:\n" + json.dumps(
-                build_analysis_payload(detail, coords, fit_path), ensure_ascii=False, indent=1)},
-        ],
-        "temperature": 0.5,
-        "max_tokens": 1200,
-    }).encode()
-    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        out = json.load(r)
-    text = (out['choices'][0]['message']['content'] or '').strip()
-    if not text:
-        raise RuntimeError('empty LLM response')
-    return text
+def analyze(detail, coords=None, fit_path=None, model=LMSTUDIO_MODEL, url=LMSTUDIO_URL, timeout=600):
+    return _chat(
+        [{"role": "system", "content": _ANALYSIS_SYS},
+         {"role": "user", "content": "Workout data:\n" + json.dumps(
+             build_analysis_payload(detail, coords, fit_path), ensure_ascii=False, indent=1)}],
+        model, url, timeout, max_tokens=2000, temperature=0.5,
+    )
