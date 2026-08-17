@@ -437,6 +437,7 @@
   const filename = {{ filename|tojson }};
   let map = null;
   let hoverMarker = null;
+  let chartLinked = false;
 
   function dash(v) { return v != null ? v : '—'; }
 
@@ -723,6 +724,16 @@
 
   function renderChart(tp) {
     if (!tp || !tp.dist_km || tp.dist_km.length === 0) return;
+    const xvals = tp.dist_km;
+
+    // Elapsed time HH:MM:SS per sample — shown as a "Time" row in the hover box.
+    const fmtHMS = s => {
+      if (s == null) return '';
+      s = Math.round(s);
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`;
+    };
+    const times = tp.t_s ? tp.t_s.map(fmtHMS) : null;
 
     const hasElev = tp.alt_m  && tp.alt_m.some(v => v != null);
     const hasSpd  = tp.spd_kph && tp.spd_kph.some(v => v != null);
@@ -735,7 +746,7 @@
 
     if (hasElev) traces.push({
       name: 'Elevation',
-      x: tp.dist_km, y: tp.alt_m,
+      x: xvals, y: tp.alt_m,
       fill: 'tozeroy', fillcolor: 'rgba(76,175,80,0.15)',
       line: { color: '#4caf50', width: 1.5 },
       type: 'scatter', mode: 'lines',
@@ -745,7 +756,7 @@
 
     if (hasSpd) traces.push({
       name: 'Speed',
-      x: tp.dist_km, y: tp.spd_kph,
+      x: xvals, y: tp.spd_kph,
       line: { color: '#42a5f5', width: 1.5 },
       type: 'scatter', mode: 'lines',
       yaxis: 'y2',
@@ -754,7 +765,7 @@
 
     if (hasPwr) traces.push({
       name: 'Power',
-      x: tp.dist_km, y: tp.pwr_w,
+      x: xvals, y: tp.pwr_w,
       line: { color: '#ff9800', width: 1 },
       type: 'scatter', mode: 'lines',
       yaxis: 'y3',
@@ -763,12 +774,24 @@
 
     if (hasCad) traces.push({
       name: 'Cadence',
-      x: tp.dist_km, y: tp.cad,
+      x: xvals, y: tp.cad,
       line: { color: '#e91e8c', width: 1 },
       type: 'scatter', mode: 'lines',
       yaxis: 'y4',
       hovertemplate: '%{y:.0f} rpm<extra>Cadence</extra>',
     });
+
+    // Invisible overlay on the first series so the hover box gains a "Time" row.
+    if (times && traces.length) {
+      traces.push({
+        name: 'Time',
+        x: xvals, y: traces[0].y, yaxis: traces[0].yaxis,
+        type: 'scatter', mode: 'lines', line: { color: 'rgba(0,0,0,0)', width: 2 },
+        customdata: times,
+        hovertemplate: '%{customdata}<extra>Time</extra>',
+        showlegend: false,
+      });
+    }
 
     // Leave room on left for 2 y-axes, right for 2 y-axes
     const layout = {
@@ -851,7 +874,8 @@
 
   // Hovering the chart drops a marker on the matching spot on the map.
   function linkChartToMap(tp) {
-    if (!map || !tp.lat || !tp.lon) return;
+    if (!map || !tp.lat || !tp.lon || chartLinked) return;
+    chartLinked = true;
     const chartDiv = document.getElementById('chart');
     if (!hoverMarker) {
       hoverMarker = L.circleMarker([0, 0], {
@@ -970,7 +994,7 @@
       ['max_speed_kph', isSwim || isRun ? 'Best Pace' : 'Max Speed',  isSwim || isRun ? null : 'kph'],
       ['avg_hr',        'Avg HR',      'bpm'],
       ['max_hr',        'Max HR',      'bpm'],
-      ...(!isSwim && !isRun ? [['avg_watts', 'Avg Watts', 'w']] : []),
+      ...(!isSwim && !isRun ? [['avg_watts', 'Avg Watts', 'w'], ['normalized_power', 'NP', 'w']] : []),
       ['calories',      'Calories',    'kcal'],
       ['active',        'Active',      null],
     ];

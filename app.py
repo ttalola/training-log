@@ -5,7 +5,7 @@ import os
 import sqlite3
 import statistics as _stats
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, abort, jsonify, render_template, request
 from werkzeug.utils import secure_filename
@@ -278,12 +278,15 @@ def db_get_detail(filename, mtime):
         return None
     if _cache_is_stale(data):
         return None
+    # Re-parse power activities cached before avg/NP were recomputed from records.
+    if (data.get('avg_watts') or data.get('normalized_power')) and data.get('power_calc_v', 0) < 2:
+        return None
     data['coords']      = json.loads(row['coords_json'])      if row['coords_json']      else []
     data['trackpoints'] = json.loads(row['trackpoints_json']) if row['trackpoints_json'] else {}
-    # Lazily re-parse GPS activities cached before chart↔map linking, so the chart
-    # samples gain lat/lon. Only when there's a track and a chart but no coordinates yet.
+    # Lazily re-parse activities cached before chart↔map linking / time axis, so the
+    # chart samples gain lat/lon and elapsed time. Only when there's a chart to upgrade.
     tp = data['trackpoints']
-    if data['coords'] and tp.get('dist_km') and 'lat' not in tp:
+    if tp.get('dist_km') and ('t_s' not in tp or (data['coords'] and 'lat' not in tp)):
         return None
     return data
 
@@ -435,7 +438,7 @@ def compute_detailed_stats(chart_raw, hr_vals, summary):
     Returns a dict of named sections, each a list of (value, unit, label) tuples.
     """
     speeds = sorted([r[2] for r in chart_raw if r[2] is not None and r[2] > 0.5])
-    powers = sorted([r[3] for r in chart_raw if r[3] is not None and r[3] > 0])
+    powers = sorted([r[3] for r in chart_raw if r[3] is not None])
     cads   = sorted([r[4] for r in chart_raw if r[4] is not None and r[4] > 0])
     hrs    = sorted([h for h in hr_vals if h and h > 0])
 
@@ -688,6 +691,8 @@ def build_trackpoints(raw_points):
     if any(len(p) > 6 and p[5] is not None and p[6] is not None for p in pts):
         tp['lat'] = [p[5] if len(p) > 6 else None for p in pts]
         tp['lon'] = [p[6] if len(p) > 6 else None for p in pts]
+    if any(len(p) > 7 and p[7] is not None for p in pts):
+        tp['t_s'] = [p[7] if len(p) > 7 else None for p in pts]
     return tp
 
 
@@ -752,6 +757,7 @@ def parse_tcx(filepath):
 
         prev_time    = None
         lap_moving_s = 0
+        lap_watts    = []
         for tp in lap.findall('.//ns:Trackpoint', NS):
             t_el   = tp.findtext('ns:Time',            namespaces=NS)
             w_el   = tp.findtext('.//ns3:Watts',        namespaces=NS)
@@ -765,8 +771,9 @@ def parse_tcx(filepath):
 
             tp_time = datetime.fromisoformat(t_el.replace('Z', '+00:00')) if t_el else None
 
-            if tp_time and w_el:
-                tp_watts_for_np.append((tp_time, float(w_el)))
+            if tp_time and w_el is not None:
+                tp_watts_for_np.append((tp_time, float(w_el)))   # includes 0 W (coasting)
+                lap_watts.append(float(w_el))
 
             if lat_el and lon_el:
                 coords.append([round(float(lat_el), 6), round(float(lon_el), 6)])
@@ -790,10 +797,11 @@ def parse_tcx(filepath):
                 round(float(dst_el) / 1000, 3) if dst_el else None,
                 round(float(alt_el), 1)         if alt_el else None,
                 round(float(spd_el) * 3.6, 1)   if spd_el else None,
-                int(float(w_el))                 if w_el   else None,
+                int(float(w_el))                 if w_el is not None else None,
                 cad_int,
                 round(float(lat_el), 6)          if (lat_el and lon_el) else None,
                 round(float(lon_el), 6)          if (lat_el and lon_el) else None,
+                round((tp_time - start_utc).total_seconds())  if tp_time else None,
             ))
 
             if tp_time and dst_el:
@@ -801,7 +809,7 @@ def parse_tcx(filepath):
                     (tp_time - start_utc).total_seconds(),
                     float(dst_el),
                     round(float(spd_el) * 3.6, 1) if spd_el else None,
-                    int(float(w_el))               if w_el   else None,
+                    int(float(w_el))               if w_el is not None else None,
                     cad_int,
                     int(float(hr_el))              if hr_el  else None,
                 ))
@@ -821,7 +829,7 @@ def parse_tcx(filepath):
             'max_speed_kph':  round(float(ms) * 3.6, 1) if ms else None,
             'avg_hr':         round(float(hr)) if hr else None,
             'max_hr':         int(mhr) if mhr else None,
-            'avg_watts':      _aw if _aw > 0 else None,
+            'avg_watts':      round(sum(lap_watts) / len(lap_watts)) if lap_watts else (_aw if _aw > 0 else None),
             'calories':       int(cal) if cal else None,
             'active':         (lap.findtext('ns:Intensity', 'Active', NS) or 'Active').lower() == 'active',
         })
@@ -834,6 +842,8 @@ def parse_tcx(filepath):
             sport_label = 'Pool Swim'
     avg_speed = (total_dist / total_time * 3.6) if total_time else None
     np_val    = calc_normalized_power(tp_watts_for_np)
+    # Average power from trackpoints, including coasting zeros (matches the FIT path)
+    tcx_avg_w = round(sum(w for _, w in tp_watts_for_np) / len(tp_watts_for_np)) if tp_watts_for_np else None
     mov_s     = moving_s if moving_s > 0 else total_time
     tss, tss_per_hour = calc_tss(total_time, np_val, ATHLETE_FTP)
 
@@ -852,7 +862,8 @@ def parse_tcx(filepath):
         'avg_hr':             round(hr_w / hr_t) if hr_t else None,
         'max_hr':             max_hr or None,
         'avg_cadence':        round(cad_w / cad_t) if cad_t else None,
-        'avg_watts':          round(watts_w / watts_t) if watts_t else None,
+        'avg_watts':          tcx_avg_w if tcx_avg_w is not None else (round(watts_w / watts_t) if watts_t else None),
+        'power_calc_v':       2,
         'normalized_power':   np_val,
         'calories':           total_cal or None,
         'moving_time':        fmt_time(mov_s),
@@ -878,7 +889,7 @@ def parse_tcx(filepath):
             'max_hr': max_hr or None,
             'avg_cadence': round(cad_w / cad_t) if cad_t else None,
             'avg_active_cadence': round(sum(active_cadences) / len(active_cadences)) if active_cadences else None,
-            'avg_watts': round(watts_w / watts_t) if watts_t else None,
+            'avg_watts': tcx_avg_w if tcx_avg_w is not None else (round(watts_w / watts_t) if watts_t else None),
             'normalized_power': np_val,
             'tss': tss, 'tss_per_hour': tss_per_hour, 'type': sport_label,
         }),
@@ -1013,10 +1024,12 @@ def parse_fit(filepath):
     active_cadences = []
     chart_raw       = []
     hr_vals_all     = []
+    power_samples   = []   # (timestamp, watts) incl zeros — for recomputed avg & NP
     prev_ts         = None
     cum_dist        = 0.0
 
     laps_data  = []
+    lap_windows = []   # (start_time, end_time) per lap — for recomputing lap power
     splits_raw = []
     for i, msg in enumerate(ff.get_messages('lap'), 1):
         lf   = {f.name: f.value for f in msg.fields}
@@ -1040,6 +1053,8 @@ def parse_fit(filepath):
             'calories':       int(lf['total_calories'])  if lf.get('total_calories')  else None,
             'active':         str(lf.get('intensity', 'active')).lower() == 'active',
         })
+        lst = lf.get('start_time')
+        lap_windows.append((lst, lst + timedelta(seconds=float(lt_e)) if (lst and lt_e) else None))
 
     for rec in ff.get_messages('record'):
         fields = {f.name: f.value for f in rec.fields}
@@ -1055,6 +1070,9 @@ def parse_fit(filepath):
 
         spd = fields.get('enhanced_speed') or fields.get('speed')
         ts  = fields.get('timestamp')
+        pw  = fields.get('power')
+        if pw is not None and ts is not None:
+            power_samples.append((ts, int(pw)))   # includes zeros (coasting)
         dt  = (ts - prev_ts).total_seconds() if (spd and ts and prev_ts) else 0
         if spd and dt > 0 and float(spd) > 0.5 and dt <= 5:
             moving_s += dt
@@ -1074,10 +1092,11 @@ def parse_fit(filepath):
             round(float(dist_field) / 1000, 3) if dist_field else (round(cum_dist / 1000, 3) if cum_dist else None),
             round(float(alt), 1)                if alt       else None,
             round(float(spd) * 3.6, 1)          if spd       else None,
-            int(fields['power'])                 if fields.get('power') else None,
+            int(fields['power'])                 if fields.get('power') is not None else None,
             int(c)                               if (c and int(c) > 0)  else None,
             round(lat * SEMI, 6)                 if (lat and lon) else None,
             round(lon * SEMI, 6)                 if (lat and lon) else None,
+            round((ts - start_time).total_seconds()) if ts else None,
         ))
 
         splits_dist = float(dist_field) if dist_field else (cum_dist if cum_dist > 0 else None)
@@ -1086,7 +1105,7 @@ def parse_fit(filepath):
                 (ts - start_time).total_seconds(),
                 splits_dist,
                 round(float(spd) * 3.6, 1) if spd else None,
-                int(fields['power'])        if fields.get('power') else None,
+                int(fields['power'])        if fields.get('power') is not None else None,
                 int(c)                      if (c and int(c) > 0)  else None,
                 int(hr)                     if (hr and int(hr) > 0) else None,
             ))
@@ -1098,9 +1117,24 @@ def parse_fit(filepath):
     # where normal riding can have >5s gaps that the heuristic discards).
     timer_s = session.get('total_timer_time')
     mov_s   = timer_s or (moving_s if moving_s > 0 else total_time)
+    # Recompute power from the records (average INCLUDES zeros) so NP >= avg is
+    # consistent, rather than trusting the device's pedaling-only average.
+    if power_samples:
+        avg_w_val = round(sum(w for _, w in power_samples) / len(power_samples))
+        np_val    = calc_normalized_power(power_samples)
+        # Per-lap average power, also including coasting zeros, so laps agree with
+        # the activity total instead of using the device's pedaling-only average.
+        for lap, (l0, l1) in zip(laps_data, lap_windows):
+            if not (l0 and l1):
+                continue
+            ws = [w for ts, w in power_samples if l0 <= ts <= l1]
+            lap['avg_watts'] = round(sum(ws) / len(ws)) if ws else None
+            lap['normalized_power'] = calc_normalized_power(
+                [(ts, w) for ts, w in power_samples if l0 <= ts <= l1])
+    else:
+        avg_w_val = None
     tss, tss_per_hour = calc_tss(total_time, nz(np_val), ATHLETE_FTP)
     avg_cad_val = nz(session.get('avg_cadence'))
-    avg_w_val   = nz(session.get('avg_power'))
     avg_hr_val  = nz(session.get('avg_heart_rate'))
     max_hr_val  = nz(session.get('max_heart_rate'))
     avg_active  = round(sum(active_cadences) / len(active_cadences)) if active_cadences else avg_cad_val
@@ -1122,6 +1156,7 @@ def parse_fit(filepath):
         'avg_cadence':        avg_cad_val,
         'avg_watts':          avg_w_val,
         'normalized_power':   nz(np_val),
+        'power_calc_v':       2,
         'calories':           nz(session.get('total_calories')),
         'moving_time':        fmt_time(mov_s) if mov_s else None,
         'moving_time_s':      mov_s,
