@@ -280,7 +280,7 @@ def db_get_detail(filename, mtime):
         return None
     # Re-parse activities cached before power/cadence were recomputed from records.
     if ((data.get('avg_watts') or data.get('normalized_power') or data.get('avg_cadence'))
-            and data.get('power_calc_v', 0) < 3):
+            and data.get('power_calc_v', 0) < 4):
         return None
     data['coords']      = json.loads(row['coords_json'])      if row['coords_json']      else []
     data['trackpoints'] = json.loads(row['trackpoints_json']) if row['trackpoints_json'] else {}
@@ -760,7 +760,7 @@ def parse_tcx(filepath):
 
         prev_time    = None
         lap_moving_s = 0
-        lap_watts    = []
+        lap_watts    = []   # (timestamp, watts) incl coasting zeros, for lap avg & NP
         for tp in lap.findall('.//ns:Trackpoint', NS):
             t_el   = tp.findtext('ns:Time',            namespaces=NS)
             w_el   = tp.findtext('.//ns3:Watts',        namespaces=NS)
@@ -776,7 +776,7 @@ def parse_tcx(filepath):
 
             if tp_time and w_el is not None:
                 tp_watts_for_np.append((tp_time, float(w_el)))   # includes 0 W (coasting)
-                lap_watts.append(float(w_el))
+                lap_watts.append((tp_time, float(w_el)))
 
             if lat_el and lon_el:
                 coords.append([round(float(lat_el), 6), round(float(lon_el), 6)])
@@ -834,7 +834,9 @@ def parse_tcx(filepath):
             'max_speed_kph':  round(float(ms) * 3.6, 1) if ms else None,
             'avg_hr':         round(float(hr)) if hr else None,
             'max_hr':         int(mhr) if mhr else None,
-            'avg_watts':      round(sum(lap_watts) / len(lap_watts)) if lap_watts else (_aw if _aw > 0 else None),
+            'avg_watts':      (round(sum(w for _, w in lap_watts) / len(lap_watts))
+                               if lap_watts else (_aw if _aw > 0 else None)),
+            'normalized_power': calc_normalized_power(lap_watts) if lap_watts else None,
             'calories':       int(cal) if cal else None,
             'active':         (lap.findtext('ns:Intensity', 'Active', NS) or 'Active').lower() == 'active',
         })
@@ -869,7 +871,7 @@ def parse_tcx(filepath):
         'max_hr':             max_hr or None,
         'avg_cadence':        tcx_avg_cad if tcx_avg_cad is not None else (round(cad_w / cad_t) if cad_t else None),
         'avg_watts':          tcx_avg_w if tcx_avg_w is not None else (round(watts_w / watts_t) if watts_t else None),
-        'power_calc_v':       3,
+        'power_calc_v':       4,
         'normalized_power':   np_val,
         'calories':           total_cal or None,
         'moving_time':        fmt_time(mov_s),
@@ -1168,7 +1170,7 @@ def parse_fit(filepath):
         'avg_cadence':        avg_cad_val,
         'avg_watts':          avg_w_val,
         'normalized_power':   nz(np_val),
-        'power_calc_v':       3,
+        'power_calc_v':       4,
         'calories':           nz(session.get('total_calories')),
         'moving_time':        fmt_time(mov_s) if mov_s else None,
         'moving_time_s':      mov_s,
