@@ -109,12 +109,29 @@ def init_db():
         ''')
 
 
+# Bumped whenever the FIT/TCX parsers learn to read something they previously
+# choked on. Cached parse failures stamped with an older value are re-parsed.
+PARSE_FAIL_V = 2
+
+
 def _cache_is_stale(data):
-    """True if a cached entry predates the multisport parser fix and must be
-    re-parsed. Old triathlon/multisport entries summarised only the first leg,
-    so their whole-event moving time exceeds the single-leg elapsed time —
-    impossible for a correctly parsed activity (moving ≤ elapsed by definition)."""
-    if not data or data.get('_failed') or data.get('legs'):
+    """True if a cached entry was produced by an older parser and must be re-parsed.
+
+    Two cases. A cached parse failure is only worth trusting if the parser that
+    produced it is still the current one — otherwise a parser fix would never
+    reach the files it was written for. And an entry predating the multisport
+    fix summarised only the first leg, so its whole-event moving time exceeds
+    the single-leg elapsed time — impossible for a correctly parsed activity
+    (moving ≤ elapsed by definition)."""
+    if not data:
+        return False
+    if data.get('_failed'):
+        # A cached parse failure is only trustworthy if the parser that produced
+        # it is still the current one; older ones are retried so that parser
+        # fixes take effect without clearing the whole cache. Duplicate markers
+        # are always trustworthy — they say nothing about the parser.
+        return data.get('_reason') == 'parse_error' and data.get('_pv', 0) < PARSE_FAIL_V
+    if data.get('legs'):
         return False
     t = data.get('total_time_s')
     m = data.get('moving_time_s')
@@ -305,12 +322,19 @@ def db_save(filename, mtime, data):
     data['trackpoints'] = trackpoints
 
 
-def db_save_failed(filename, mtime):
+def db_save_failed(filename, mtime, reason='parse_error'):
+    """Cache a file we could not turn into an activity.
+
+    `reason` is 'duplicate' (a real activity, already cached under another
+    filename) or 'parse_error' (the file itself would not read). Parse errors
+    carry the parser version so that a later parser fix can retry them.
+    """
+    marker = json.dumps({'_failed': True, '_reason': reason, '_pv': PARSE_FAIL_V})
     with get_db() as db:
         db.execute(
             'INSERT OR REPLACE INTO activities '
             '(filename, mtime, data_json, coords_json, trackpoints_json) VALUES (?,?,?,?,?)',
-            (filename, mtime, '{"_failed":true}', None, None)
+            (filename, mtime, marker, None, None)
         )
 
 
@@ -981,8 +1005,90 @@ def build_multisport(sessions):
     return label, legs, total_time, total_dist, agg
 
 
+# ── fitparse tolerance ───────────────────────────────────────────────────────
+# Since early 2026 Zwift (FIT manufacturer 89) writes the `event` message's `data`
+# field with a declared size of 1 byte while typing it uint32. fitparse 1.2.0
+# rejects any field whose size is not a multiple of its base type's size, so the
+# entire file fails to parse and the ride never appears. The library's own comment
+# at that check reads "we could fall back to byte encoding if there's any examples
+# in the wild" — these are the examples, and this is that fallback.
+
+_fitparse_patched = False
+
+
+def _patch_fitparse_tolerance():
+    """Read malformed FIT field definitions as opaque bytes instead of raising."""
+    global _fitparse_patched
+    if _fitparse_patched:
+        return
+
+    from fitparse.base import FitFile as _FitFile
+    from fitparse.profile import MESSAGE_TYPES
+    from fitparse.records import (
+        FieldDefinition, DevFieldDefinition, DefinitionMessage,
+        BASE_TYPES, BASE_TYPE_BYTE, get_dev_type,
+    )
+
+    def _parse_definition_message(self, header):
+        endian = '>' if self._read_struct('xB') else '<'
+        global_mesg_num, num_fields = self._read_struct('HB', endian=endian)
+        mesg_type = MESSAGE_TYPES.get(global_mesg_num)
+
+        field_defs = []
+        for _ in range(num_fields):
+            field_def_num, field_size, base_type_num = self._read_struct('3B', endian=endian)
+            field     = mesg_type.fields.get(field_def_num) if mesg_type else None
+            base_type = BASE_TYPES.get(base_type_num, BASE_TYPE_BYTE)
+
+            if (field_size % base_type.size) != 0:
+                # Keep the declared size so the record stream stays aligned, but
+                # read the field as raw bytes and drop the profile field so no
+                # decoding is attempted on a value we cannot trust.
+                base_type, field = BASE_TYPE_BYTE, None
+
+            if field and field.components:
+                for component in field.components:
+                    if component.accumulate:
+                        accumulators = self._accumulators.setdefault(global_mesg_num, {})
+                        accumulators[component.def_num] = 0
+
+            field_defs.append(FieldDefinition(
+                field=field,
+                def_num=field_def_num,
+                base_type=base_type,
+                size=field_size,
+            ))
+
+        dev_field_defs = []
+        if header.is_developer_data:
+            num_dev_fields = self._read_struct('B', endian=endian)
+            for _ in range(num_dev_fields):
+                field_def_num, field_size, dev_data_index = self._read_struct('3B', endian=endian)
+                dev_field_defs.append(DevFieldDefinition(
+                    field=get_dev_type(dev_data_index, field_def_num),
+                    dev_data_index=dev_data_index,
+                    def_num=field_def_num,
+                    size=field_size,
+                ))
+
+        def_mesg = DefinitionMessage(
+            header=header,
+            endian=endian,
+            mesg_type=mesg_type,
+            mesg_num=global_mesg_num,
+            field_defs=field_defs,
+            dev_field_defs=dev_field_defs,
+        )
+        self._local_mesgs[header.local_mesg_num] = def_mesg
+        return def_mesg
+
+    _FitFile._parse_definition_message = _parse_definition_message
+    _fitparse_patched = True
+
+
 def parse_fit(filepath):
     from fitparse import FitFile
+    _patch_fitparse_tolerance()
     ff       = FitFile(filepath)
     sessions = [{f.name: f.value for f in msg.fields} for msg in ff.get_messages('session')]
     if not sessions:
@@ -1257,7 +1363,7 @@ def load_activities():
             data = _parse(path)
             if data:
                 if db_activity_exists(data['date_sort'], data['type'], exclude_filename=fname):
-                    db_save_failed(fname, mtime)
+                    db_save_failed(fname, mtime, reason='duplicate')
                     continue
                 db_save(fname, mtime, data)
             else:
