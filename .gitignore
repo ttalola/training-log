@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 .env
 garmin_tokens/
+.DS_Store
+*.db.bak*
