@@ -1,0 +1,5 @@
+flask
+fitparse
+garminconnect
+python-dotenv
+reverse_geocode
